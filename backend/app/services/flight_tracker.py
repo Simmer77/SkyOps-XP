@@ -205,6 +205,58 @@ class FlightTracker:
                 status="COMPLETED"
             )
             session.add(log)
+            await session.flush()
+
+            # 5. Record granular transactions in Financial Ledger
+            dest = job.destination_icao if job else aircraft.current_icao
+            orig = job.origin_icao if job else aircraft.current_icao
+            route_str = f"{orig} ➔ {dest}"
+
+            if financials["gross_revenue"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="REVENUE",
+                    title=f"Ricavo Volo {log.flight_number} ({route_str})",
+                    amount_eur=financials["gross_revenue"],
+                    description=f"Compenso contratto completato con {aircraft.tail_number}",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["fuel_cost"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="FUEL",
+                    title=f"Consumo Jet-A1 ({fuel_burned:.1f} kg)",
+                    amount_eur=-financials["fuel_cost"],
+                    description=f"Carburante bruciato rotta {route_str}",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["landing_fee"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="LANDING_FEE",
+                    title=f"Tassa Atterraggio {dest}",
+                    amount_eur=-financials["landing_fee"],
+                    description=f"Tassa aeroportuale e assistenza a terra per {aircraft.tail_number} ({aircraft.category})",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["lease_cost"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="LEASE",
+                    title=f"Canone Noleggio {aircraft.tail_number}",
+                    amount_eur=-financials["lease_cost"],
+                    description=f"Block time {duration_hours:.2f} ore a {aircraft.hourly_lease_rate:.2f} €/h",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+
             await session.commit()
             
             # Reset tracker state

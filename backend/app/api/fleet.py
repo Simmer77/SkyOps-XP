@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.models.schema import Aircraft, Company, MaintenanceEvent
 from app.services.xp_connector import xp_connector
 from app.services.maintenance import MaintenanceService
+from app.services.economy import EconomyService
 from app.core.config import settings
 
 router = APIRouter(prefix="/fleet", tags=["Fleet"])
@@ -357,6 +358,15 @@ async def refuel_aircraft(aircraft_id: int, req: RefuelRequest, db: AsyncSession
             raise HTTPException(status_code=400, detail="Fondi insufficienti per il rifornimento.")
         if company:
             company.cash_balance -= cost_eur
+            await EconomyService.record_transaction(
+                session=db,
+                category="FUEL",
+                title=f"Rifornimento a Terra ({diff_kg:.1f} kg)",
+                amount_eur=-cost_eur,
+                description=f"Carburante Jet-A1 imbarcato per {aircraft.tail_number} ({aircraft.current_icao})",
+                aircraft_tail=aircraft.tail_number,
+                company=company
+            )
             
     aircraft.fuel_quantity_kg = target
     await db.commit()
@@ -391,6 +401,15 @@ async def perform_service(aircraft_id: int, req: ServiceRequest, db: AsyncSessio
         
     if company:
         company.cash_balance -= cost_eur
+        await EconomyService.record_transaction(
+            session=db,
+            category="MAINTENANCE",
+            title=f"Manutenzione: {srv['name']}",
+            amount_eur=-cost_eur,
+            description=f"Intervento officina su {aircraft.tail_number} ({aircraft.name})",
+            aircraft_tail=aircraft.tail_number,
+            company=company
+        )
         
     if "engine_health_gain" in srv:
         aircraft.health_engine_pct = min(100.0, aircraft.health_engine_pct + srv["engine_health_gain"])

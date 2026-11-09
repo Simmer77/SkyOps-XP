@@ -32,6 +32,8 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
             "name": company.name if company else "SkyOps Aviation",
             "cash_balance": company.cash_balance if company else 150000.0,
             "reputation": company.reputation if company else 100.0,
+            "operating_day": company.operating_day if (company and company.operating_day) else 1,
+            "virtual_date": company.virtual_date.isoformat() if (company and company.virtual_date) else None,
             "simbrief_username": company.simbrief_username if company else "",
             "simbrief_pilot_id": company.simbrief_pilot_id if company else "",
         },

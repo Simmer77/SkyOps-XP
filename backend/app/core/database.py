@@ -32,3 +32,8 @@ async def init_db():
                 await conn.execute(text(f"ALTER TABLE aircraft ADD COLUMN {col_name} {col_type}"))
             except Exception:
                 pass # Column already exists
+                
+        try:
+            await conn.execute(text("ALTER TABLE company ADD COLUMN operating_day INTEGER DEFAULT 1"))
+        except Exception:
+            pass

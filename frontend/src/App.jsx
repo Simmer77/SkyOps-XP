@@ -3,11 +3,12 @@ import {
   Plane, Gauge, Briefcase, Wrench, BookOpen, Radio, 
   Fuel, AlertTriangle, CheckCircle, ArrowRight, RefreshCw, 
   MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock,
-  Edit3, Camera, Calendar, Cpu
+  Edit3, Camera, Calendar, Cpu, DollarSign, TrendingUp, TrendingDown,
+  ArrowUpRight, ArrowDownRight, Wallet, FileText, Filter
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('flight'); // 'flight', 'fleet', 'rental', 'jobs', 'simbrief', 'maintenance', 'economics', 'logbook'
+  const [activeTab, setActiveTab] = useState('flight'); // 'flight', 'fleet', 'rental', 'jobs', 'simbrief', 'maintenance', 'finances', 'logbook'
   const [systemStatus, setSystemStatus] = useState(null);
   const [fleet, setFleet] = useState([]);
   const [rentalCatalog, setRentalCatalog] = useState([]);
@@ -17,6 +18,10 @@ export default function App() {
   const [simbriefOfp, setSimbriefOfp] = useState(null);
   const [simbriefInput, setSimbriefInput] = useState('');
   const [financialGuide, setFinancialGuide] = useState(null);
+  const [financialOverview, setFinancialOverview] = useState(null);
+  const [financialLedger, setFinancialLedger] = useState([]);
+  const [financeSubTab, setFinanceSubTab] = useState('overview'); // 'overview', 'ledger', 'rules'
+  const [ledgerCategoryFilter, setLedgerCategoryFilter] = useState('ALL');
   const [flightHistory, setFlightHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -72,6 +77,16 @@ export default function App() {
   const formatEuro = (val) => {
     if (val === undefined || val === null || isNaN(val)) return '€ 0,00';
     return '€ ' + Number(val).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const formatVirtualDate = (dateStr) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('it-IT', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
   };
 
   // 1. Initial Load & Fetchers
@@ -166,6 +181,50 @@ export default function App() {
     }
   };
 
+  const fetchFinances = async () => {
+    try {
+      const [resOverview, resLedger] = await Promise.all([
+        fetch('/api/finances/overview'),
+        fetch('/api/finances/ledger?limit=150')
+      ]);
+      if (resOverview.ok) {
+        const data = await resOverview.json();
+        setFinancialOverview(data);
+      }
+      if (resLedger.ok) {
+        const data = await resLedger.json();
+        setFinancialLedger(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAdvanceTime = async (days = 7) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/finances/advance_time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const deductions = data.data.total_deductions_eur;
+        showNotice(`Avanzamento a Giorno ${data.data.new_day} (+${days} gg) completato! Oneri fissi dedotti: ${formatEuro(deductions)}`, 'success');
+        fetchStatus();
+        fetchFleet();
+        fetchFinances();
+      } else {
+        showNotice(data.detail || 'Errore durante l avanzamento temporale', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore durante l avanzamento temporale', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
     fetchFleet();
@@ -173,7 +232,14 @@ export default function App() {
     fetchFinancialGuide();
     fetchActiveFlight();
     fetchHistory();
+    fetchFinances();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'finances') {
+      fetchFinances();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (selectedAircraft) {
@@ -537,6 +603,7 @@ export default function App() {
         fetchFleet();
         fetchActiveFlight();
         fetchHistory();
+        fetchFinances();
       } else {
         showNotice(data.detail, 'error');
       }
@@ -569,6 +636,7 @@ export default function App() {
         showNotice(data.message, 'success');
         fetchStatus();
         fetchFleet();
+        fetchFinances();
       } else {
         showNotice(data.detail, 'error');
       }
@@ -637,6 +705,26 @@ export default function App() {
               </div>
             </div>
 
+            {/* Operating Day & Virtual Calendar Widget */}
+            <div 
+              onClick={() => setActiveTab('finances')}
+              className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 hover:border-amber-500/50 cursor-pointer px-3 py-1.5 rounded-lg transition"
+              title="Clicca per aprire la gestione del Bilancio e del Tempo Operativo"
+            >
+              <Calendar size={16} className="text-amber-400" />
+              <div>
+                <div className="text-[10px] text-slate-400 uppercase font-mono">Giorno Operativo</div>
+                <div className="text-sm font-bold font-mono text-amber-300">
+                  Giorno {systemStatus?.company?.operating_day ?? (financialOverview?.operating_day || 1)}
+                  {systemStatus?.company?.virtual_date && (
+                    <span className="text-[11px] text-slate-400 font-normal ml-1.5">
+                      ({formatVirtualDate(systemStatus?.company?.virtual_date)})
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
               <Award size={16} className="text-cyan-400" />
               <div>
@@ -668,7 +756,7 @@ export default function App() {
             { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
             { id: 'simbrief', label: 'SimBrief Dispatch', icon: Radio },
             { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
-            { id: 'economics', label: 'Legenda Costi & Ricavi', icon: HelpCircle },
+            { id: 'finances', label: 'Bilancio & Finanze', icon: TrendingUp },
             { id: 'logbook', label: 'Registro Voli', icon: BookOpen },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -2007,103 +2095,603 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 7: FINANCIAL GUIDE & RULES (LEGENDA COSTI E RICAVI) */}
-        {activeTab === 'economics' && financialGuide && (
+        {/* TAB 7: BILANCIO, FINANZE & GIORNO OPERATIVO */}
+        {activeTab === 'finances' && (
           <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Info size={22} className="text-cyan-400" /> Legenda Economica & Modello Operativo
-              </h2>
-              <p className="text-xs text-slate-400 font-mono mt-1">
-                Trasparenza totale: ecco esattamente come vengono calcolati i ricavi, i consumi, le tasse aeroportuali e l usura nella simulazione.
-              </p>
-            </div>
-
-            {/* 1. Fuel Rules */}
-            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-2">
-              <div className="flex items-center gap-2 text-purple-400 font-bold text-sm font-mono">
-                <Fuel size={16} /> 1. CARBURANTE (JET-A1 KEROSENE)
-              </div>
-              <div className="text-xs text-slate-300 font-mono leading-relaxed">
-                <div className="font-bold text-white mb-1">{financialGuide.fuel_rules.formula}</div>
-                <p className="text-slate-400">{financialGuide.fuel_rules.notes}</p>
-                <div className="mt-2 grid grid-cols-2 max-w-sm gap-2 bg-slate-900/60 p-2.5 rounded border border-slate-800">
-                  <div>Prezzo Jet-A1 al Kg: <span className="text-purple-300 font-bold">{formatEuro(financialGuide.fuel_rules.price_per_kg_eur)}/kg</span></div>
-                  <div>Equivalente al Litro: <span className="text-slate-300 font-bold">{formatEuro(financialGuide.fuel_rules.price_per_litre_approx_eur)}/L</span></div>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. Landing Fees */}
-            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
-              <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm font-mono">
-                <MapPin size={16} /> 2. TASSE D ATTERRAGGIO (LANDING & HANDLING FEES)
-              </div>
-              <div className="text-xs text-slate-300 font-mono leading-relaxed">
-                <div className="font-bold text-white mb-2">{financialGuide.landing_fee_rules.formula}</div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {financialGuide.landing_fee_rules.categories.map((cat, idx) => (
-                    <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                      <div className="font-bold text-cyan-300">{cat.category}</div>
-                      <div className="text-slate-400 mt-1">Quota Base: <span className="text-white">{cat.base}</span></div>
-                      <div className="text-slate-400">Quota Peso: <span className="text-white">{cat.per_tonne}</span></div>
-                      <div className="text-[11px] text-emerald-400 mt-2 font-semibold">{cat.typical_cost}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Revenue Rules */}
-            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
-              <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm font-mono">
-                <Briefcase size={16} /> 3. CALCOLO RICAVI DEI VOLI (JOB REWARDS)
-              </div>
-              <div className="text-xs text-slate-300 font-mono leading-relaxed">
-                <div className="font-bold text-white mb-2">{financialGuide.revenue_rules.formula}</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {financialGuide.revenue_rules.breakdown.map((item, idx) => (
-                    <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                      <div className="font-bold text-slate-200">{item.component}</div>
-                      <div className="text-slate-400 mt-0.5">{item.description}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* 4. Touchdown & Wear Table */}
-            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm font-mono">
-                <Wrench size={16} /> 4. MECCANICA USURA E ATTERRAGGI (TOUCHDOWN DYNAMICS)
-              </div>
-              <div className="text-xs text-slate-300 font-mono leading-relaxed">
-                <p className="text-slate-400 mb-3">
-                  Ogni componente si usura in proporzione al tempo di volo, ma lo stress maggiore si concentra all atterraggio e nelle manovre brusche:
+            {/* Header & Title */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <TrendingUp size={22} className="text-emerald-400" /> Bilancio, Economia & Tempo Operativo
+                </h2>
+                <p className="text-xs text-slate-400 font-mono mt-1">
+                  Gestione patrimoniale e contabile, controllo cassa, conto economico e dilatazione temporale per costi fissi.
                 </p>
+              </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border border-slate-800 rounded">
-                    <thead className="bg-slate-900 text-slate-400">
-                      <tr>
-                        <th className="p-2.5">Giudizio Contatto</th>
-                        <th className="p-2.5">Soglie Telemetriche</th>
-                        <th className="p-2.5">Impatto su Gomme e Carrello</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60">
-                      {financialGuide.wear_and_maintenance_rules.touchdown_impact_table.map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-800/30">
-                          <td className="p-2.5 font-bold text-white">{row.rating}</td>
-                          <td className="p-2.5 text-cyan-300">{row.fpm}</td>
-                          <td className="p-2.5 text-slate-300">{row.impact}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {/* Sub-Tabs Switcher */}
+              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-lg text-xs font-mono">
+                {[
+                  { id: 'overview', label: 'Quadro & Bilancio', icon: FileText },
+                  { id: 'ledger', label: `Registro Cassa (${financialLedger.length})`, icon: Wallet },
+                  { id: 'rules', label: 'Regole & Formule', icon: HelpCircle }
+                ].map((st) => {
+                  const SIcon = st.icon;
+                  const active = financeSubTab === st.id;
+                  return (
+                    <button
+                      key={st.id}
+                      onClick={() => setFinanceSubTab(st.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition ${
+                        active 
+                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold' 
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <SIcon size={14} />
+                      {st.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* HERO BANNER: GESTIONE GIORNO OPERATIVO & DILATAZIONE TEMPO */}
+            <div className="glass-panel p-5 rounded-xl border border-amber-500/30 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-amber-950/20 shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 -mr-16 -mt-16 w-56 h-56 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+              
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                <div className="lg:col-span-7 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1">
+                      <Clock size={11} /> Ciclo Temporale Ibrido
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      1 Giorno Reale ≈ 1 Settimana Simulata
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-baseline gap-3">
+                    <span className="text-3xl font-black text-white font-mono tracking-tight">
+                      Giorno Operativo {financialOverview?.operating_day ?? 1}
+                    </span>
+                    <span className="text-sm font-semibold text-amber-300 font-mono bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/20">
+                      Settimana {Math.ceil((financialOverview?.operating_day ?? 1) / 7)}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-300 font-mono flex items-center gap-1.5">
+                    <Calendar size={13} className="text-cyan-400" />
+                    Data Fiscale Virtuale: <strong className="text-white">{formatVirtualDate(financialOverview?.virtual_date)}</strong>
+                  </p>
+
+                  <p className="text-xs text-slate-400 font-sans leading-relaxed pt-1">
+                    I costi fissi di gestione (rimessaggio hangar e assicurazioni flotta) maturano con il trascorrere delle settimane operative. Non voli per qualche giorno reale? Nessun problema: il tempo avanza solo quando effettui missioni o quando avanzi manualmente il ciclo aziendale.
+                  </p>
+                </div>
+
+                {/* Right side: Fixed Cost Projections & Advance Actions */}
+                <div className="lg:col-span-5 bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex justify-between items-center text-xs font-mono">
+                    <span className="text-slate-400 flex items-center gap-1.5">
+                      <Fuel size={13} className="text-amber-400" /> Oneri Fissi Prossimo Ciclo (+7 gg):
+                    </span>
+                    <span className="font-bold text-rose-400 text-sm">
+                      {formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_fixed_eur || 0)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80">
+                    <div>
+                      <span className="text-slate-400">Hangar Flotta:</span>{' '}
+                      <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_hangar_eur || 0)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400">Polizze Kasko/RC:</span>{' '}
+                      <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_insurance_eur || 0)}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleAdvanceTime(7)}
+                      disabled={loading}
+                      className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-bold text-xs font-mono shadow-md transition disabled:opacity-50"
+                    >
+                      <Calendar size={14} /> Avanza Settimana (+7 gg)
+                    </button>
+                    <button
+                      onClick={() => handleAdvanceTime(1)}
+                      disabled={loading}
+                      className="py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs border border-slate-700 transition disabled:opacity-50"
+                      title="Avanza solo 1 giorno per piccoli aggiustamenti"
+                    >
+                      +1 Giorno
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* SUB-VIEW 1: QUADRO GENERALE & BILANCIO (P&L + STATO PATRIMONIALE) */}
+            {financeSubTab === 'overview' && (
+              <div className="space-y-6">
+                {/* 4 Hero KPI Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Card 1: Liquidità Cassa */}
+                  <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-1">
+                    <div className="flex justify-between items-center text-slate-400 text-xs font-mono">
+                      <span>LIQUIDITÀ CASSA</span>
+                      <Wallet size={16} className="text-emerald-400" />
+                    </div>
+                    <div className="text-xl font-bold font-mono text-emerald-400">
+                      {formatEuro(financialOverview?.balance_sheet?.cash_balance_eur ?? systemStatus?.company?.cash_balance ?? 175000)}
+                    </div>
+                    <p className="text-[11px] text-slate-400">Disponibilità immediata per DOC e riparazioni</p>
+                  </div>
+
+                  {/* Card 2: Valore Flotta */}
+                  <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-1">
+                    <div className="flex justify-between items-center text-slate-400 text-xs font-mono">
+                      <span>VALORE FLOTTA ATTIVA</span>
+                      <Plane size={16} className="text-cyan-400" />
+                    </div>
+                    <div className="text-xl font-bold font-mono text-cyan-300">
+                      {formatEuro(financialOverview?.balance_sheet?.fleet_book_value_eur ?? 0)}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      {financialOverview?.balance_sheet?.owned_aircraft_count ?? 0} velivoli di proprietà a bilancio
+                    </p>
+                  </div>
+
+                  {/* Card 3: Patrimonio Netto */}
+                  <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-1">
+                    <div className="flex justify-between items-center text-slate-400 text-xs font-mono">
+                      <span>PATRIMONIO NETTO (ASSETS)</span>
+                      <Award size={16} className="text-purple-400" />
+                    </div>
+                    <div className="text-xl font-bold font-mono text-purple-300">
+                      {formatEuro(financialOverview?.balance_sheet?.total_net_worth_eur ?? 0)}
+                    </div>
+                    <p className="text-[11px] text-slate-400">Capitale liquido + valore flotta aziendale</p>
+                  </div>
+
+                  {/* Card 4: Utile Netto */}
+                  <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-1">
+                    <div className="flex justify-between items-center text-slate-400 text-xs font-mono">
+                      <span>UTILE NETTO COMPLESSIVO</span>
+                      <TrendingUp size={16} className={
+                        (financialOverview?.income_statement?.net_profit_eur || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      } />
+                    </div>
+                    <div className={`text-xl font-bold font-mono ${
+                      (financialOverview?.income_statement?.net_profit_eur || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {formatEuro(financialOverview?.income_statement?.net_profit_eur ?? 0)}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Margine operativo: <strong className="text-white">{financialOverview?.income_statement?.profit_margin_pct ?? 0}%</strong>
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2 Main Panels: Stato Patrimoniale vs Conto Economico (P&L) */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  
+                  {/* Panel A: STATO PATRIMONIALE */}
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-4">
+                    <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+                      <div>
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          <FileText size={16} className="text-cyan-400" /> Stato Patrimoniale (Asset & Flotta)
+                        </h3>
+                        <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                          Consistenza patrimoniale societaria al Giorno {financialOverview?.operating_day ?? 1}
+                        </p>
+                      </div>
+                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                        Patrimonio Netto
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 font-mono text-xs">
+                      {/* Attivo Circolante */}
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center text-slate-300 font-bold">
+                          <span>1. ATTIVO CIRCOLANTE</span>
+                          <span className="text-emerald-400">
+                            {formatEuro(financialOverview?.balance_sheet?.cash_balance_eur ?? 175000)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-400 pl-3">
+                          <span>Disponibilità liquide (Conto aziendale)</span>
+                          <span className="text-slate-200">
+                            {formatEuro(financialOverview?.balance_sheet?.cash_balance_eur ?? 175000)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Attivo Fisso Immobilizzato */}
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center text-slate-300 font-bold">
+                          <span>2. IMMOBILIZZAZIONI MATERIALI (FLOTTA)</span>
+                          <span className="text-cyan-300">
+                            {formatEuro(financialOverview?.balance_sheet?.fleet_book_value_eur ?? 0)}
+                          </span>
+                        </div>
+                        
+                        <div className="divide-y divide-slate-800/60 pl-3 space-y-1.5 pt-1">
+                          {fleet.filter(a => a.ownership === 'OWNED').map((ac) => (
+                            <div key={ac.id} className="pt-1.5 flex justify-between items-center">
+                              <div>
+                                <span className="font-bold text-white">{ac.tail_number}</span>
+                                <span className="text-slate-400 ml-1.5">{ac.name} ({ac.year_manufactured || 2021})</span>
+                              </div>
+                              <span className="text-slate-300">{formatEuro(ac.purchase_price_eur || 0)}</span>
+                            </div>
+                          ))}
+                          {fleet.filter(a => a.ownership === 'OWNED').length === 0 && (
+                            <div className="text-slate-500 py-1">Nessun aereo di proprietà registrato.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Aeromobili a Noleggio (Fuori Bilancio) */}
+                      <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-800/60 text-slate-400 space-y-1">
+                        <div className="flex justify-between items-center text-slate-300 font-semibold text-[11px]">
+                          <span>3. AEROMOBILI IN LEASE / NOLEGGIO ATTIVI</span>
+                          <span className="text-amber-400">{fleet.filter(a => a.ownership === 'LEASED').length} aerei</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-sans">
+                          Gli aeromobili a noleggio non concorrono al patrimonio aziendale ma generano costi orari variabili (DOC) durante l uso.
+                        </p>
+                      </div>
+
+                      {/* Totale Patrimonio Netto */}
+                      <div className="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 flex justify-between items-center font-bold text-sm">
+                        <span className="text-white">TOTALE PATRIMONIO NETTO</span>
+                        <span className="text-cyan-300">
+                          {formatEuro(financialOverview?.balance_sheet?.total_net_worth_eur ?? 0)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Panel B: CONTO ECONOMICO (P&L - PROFITTI & PERDITE) */}
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-4">
+                    <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
+                      <div>
+                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                          <TrendingUp size={16} className="text-emerald-400" /> Conto Economico Progressivo (P&L)
+                        </h3>
+                        <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                          Dettaglio ricavi, costi operativi DOC, manutenzioni e oneri fissi
+                        </p>
+                      </div>
+                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        In Euro (€)
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 font-mono text-xs">
+                      {/* (+) Ricavi Operativi */}
+                      <div className="bg-emerald-950/20 p-3 rounded-lg border border-emerald-500/30 space-y-1.5">
+                        <div className="flex justify-between items-center font-bold text-emerald-300">
+                          <span>(+) RICAVI TOTALI DA VOLI & INCARICHI</span>
+                          <span className="text-sm">
+                            {formatEuro(financialOverview?.income_statement?.gross_revenue_eur ?? 0)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-emerald-400/80 font-sans">
+                          Compensi contratti passeggeri, merci cargo, voli charter VIP e sanitari
+                        </p>
+                      </div>
+
+                      {/* (-) Costi Operativi Diretti (DOC) */}
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center font-bold text-slate-300">
+                          <span>(-) COSTI OPERATIVI DIRETTI (DOC)</span>
+                          <span className="text-rose-400">
+                            -{formatEuro(financialOverview?.income_statement?.direct_operating_costs?.total_eur ?? 0)}
+                          </span>
+                        </div>
+                        <div className="pl-3 space-y-1 text-slate-400">
+                          <div className="flex justify-between items-center">
+                            <span>Carburante Jet-A1 (1.75 €/kg)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.fuel_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Tasse Atterraggio & Handling (MTOW)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.landing_fees_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Canoni Orari Noleggio (Lease Block Hours)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.aircraft_leases_eur ?? 0)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* (-) Manutenzione e Officina */}
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                        <div className="flex justify-between items-center font-bold text-slate-300">
+                          <span>(-) MANUTENZIONE & RIPARAZIONI OFFICINA</span>
+                          <span className="text-rose-400">
+                            -{formatEuro(financialOverview?.income_statement?.maintenance_costs?.total_eur ?? 0)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 pl-3">
+                          Tagliandi 50h/100h, ispezioni annuali EASA, freni, gomme e revisioni motore
+                        </p>
+                      </div>
+
+                      {/* (-) Costi Fissi di Gestione */}
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center font-bold text-slate-300">
+                          <span>(-) ONERI FISSI STRUTTURALI</span>
+                          <span className="text-rose-400">
+                            -{formatEuro(financialOverview?.income_statement?.fixed_overheads?.total_eur ?? 0)}
+                          </span>
+                        </div>
+                        <div className="pl-3 space-y-1 text-slate-400">
+                          <div className="flex justify-between items-center">
+                            <span>Rimessaggio & Hangaraggio Settimanale</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.fixed_overheads?.hangar_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Polizze Assicurative Flotta (Corpi & RC)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.fixed_overheads?.insurance_eur ?? 0)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* (=) UTILE NETTO FINALE */}
+                      <div className={`p-3.5 rounded-lg border flex justify-between items-center font-bold text-sm ${
+                        (financialOverview?.income_statement?.net_profit_eur || 0) >= 0
+                          ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                          : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
+                      }`}>
+                        <div>
+                          <span>RISULTATO D ESERCIZIO (UTILE NETTO)</span>
+                          <span className="text-[11px] font-normal block text-slate-400">
+                            Margine Operativo sul Fatturato: {financialOverview?.income_statement?.profit_margin_pct ?? 0}%
+                          </span>
+                        </div>
+                        <span className="text-base font-mono">
+                          {formatEuro(financialOverview?.income_statement?.net_profit_eur ?? 0)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW 2: LIBRO MASTRO / REGISTRO CASSA (TRANSACTIONS LEDGER) */}
+            {financeSubTab === 'ledger' && (
+              <div className="space-y-4">
+                {/* Category Filter Pills */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                    <span className="text-slate-400 flex items-center gap-1 mr-1">
+                      <Filter size={13} /> Filtra Categoria:
+                    </span>
+                    {[
+                      { id: 'ALL', label: 'Tutti' },
+                      { id: 'REVENUE', label: 'Incassi Voli (+)' },
+                      { id: 'FUEL', label: 'Carburante' },
+                      { id: 'LANDING_FEE', label: 'Tasse Atterraggio' },
+                      { id: 'MAINTENANCE', label: 'Manutenzione' },
+                      { id: 'LEASE', label: 'Noleggi' },
+                      { id: 'FIXED_HANGAR', label: 'Hangar' },
+                      { id: 'FIXED_INSURANCE', label: 'Assicurazioni' },
+                    ].map((btn) => (
+                      <button
+                        key={btn.id}
+                        onClick={() => setLedgerCategoryFilter(btn.id)}
+                        className={`px-2.5 py-1 rounded transition ${
+                          ledgerCategoryFilter === btn.id
+                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                            : 'bg-slate-800/60 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={fetchFinances}
+                    className="flex items-center gap-1 text-xs font-mono text-slate-400 hover:text-cyan-300 transition"
+                  >
+                    <RefreshCw size={12} /> Aggiorna Registro
+                  </button>
+                </div>
+
+                {/* Ledger Table */}
+                <div className="glass-panel rounded-xl border border-slate-800 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left font-mono text-xs">
+                      <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
+                        <tr>
+                          <th className="p-3">Giorno / Data</th>
+                          <th className="p-3">Categoria</th>
+                          <th className="p-3">Velivolo</th>
+                          <th className="p-3">Descrizione / Causale Operazione</th>
+                          <th className="p-3 text-right">Importo (€)</th>
+                          <th className="p-3 text-right">Saldo Cassa</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                        {financialLedger
+                          .filter(tx => ledgerCategoryFilter === 'ALL' || tx.category === ledgerCategoryFilter)
+                          .map((tx) => (
+                            <tr key={tx.id} className="hover:bg-slate-800/30 transition">
+                              <td className="p-3 text-slate-400 whitespace-nowrap">
+                                <span className="font-bold text-amber-300/90">Giorno {tx.operating_day || 1}</span>
+                                <span className="text-[10px] block text-slate-500">
+                                  {new Date(tx.timestamp).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}
+                                </span>
+                              </td>
+                              <td className="p-3 whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  tx.category === 'REVENUE' || tx.category === 'REVENUE_FLIGHT' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                  tx.category === 'FUEL' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                                  tx.category === 'LANDING_FEE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                                  tx.category === 'MAINTENANCE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                                  tx.category === 'LEASE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                                  'bg-slate-800 text-slate-300'
+                                }`}>
+                                  {tx.category}
+                                </span>
+                              </td>
+                              <td className="p-3 font-bold text-white whitespace-nowrap">
+                                {tx.related_aircraft_tail ? (
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
+                                    {tx.related_aircraft_tail}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500">-</span>
+                                )}
+                              </td>
+                              <td className="p-3">
+                                <div className="font-semibold text-white">{tx.title}</div>
+                                {tx.description && (
+                                  <div className="text-[11px] text-slate-400 font-sans">{tx.description}</div>
+                                )}
+                              </td>
+                              <td className={`p-3 text-right font-bold whitespace-nowrap ${
+                                tx.amount_eur >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}>
+                                {tx.amount_eur >= 0 ? '+' : ''}{formatEuro(tx.amount_eur)}
+                              </td>
+                              <td className="p-3 text-right font-bold text-slate-300 font-mono whitespace-nowrap">
+                                {formatEuro(tx.balance_after_eur)}
+                              </td>
+                            </tr>
+                          ))}
+                        {financialLedger.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="p-8 text-center text-slate-500">
+                              Nessuna transazione contabile registrata. Le transazioni verranno generate automaticamente al termine di ciascun volo, rifornimento o manutenzione.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW 3: REGOLE E FORMULE ECONOMICHE */}
+            {financeSubTab === 'rules' && financialGuide && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Info size={18} className="text-cyan-400" /> Trasparenza Calcoli & Formule Economiche Verosimili
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    Tutti i conti di SkyOps XP si basano su tariffe realistiche europee (EASA, IATA e aeroportuali).
+                  </p>
+                </div>
+
+                {/* 1. Fuel Rules */}
+                <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2 text-purple-400 font-bold text-sm font-mono">
+                    <Fuel size={16} /> 1. CARBURANTE (JET-A1 KEROSENE)
+                  </div>
+                  <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                    <div className="font-bold text-white mb-1">{financialGuide.fuel_rules.formula}</div>
+                    <p className="text-slate-400">{financialGuide.fuel_rules.notes}</p>
+                    <div className="mt-2 grid grid-cols-2 max-w-sm gap-2 bg-slate-900/60 p-2.5 rounded border border-slate-800">
+                      <div>Prezzo Jet-A1 al Kg: <span className="text-purple-300 font-bold">{formatEuro(financialGuide.fuel_rules.price_per_kg_eur)}/kg</span></div>
+                      <div>Equivalente al Litro: <span className="text-slate-300 font-bold">{formatEuro(financialGuide.fuel_rules.price_per_litre_approx_eur)}/L</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Landing Fees */}
+                <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm font-mono">
+                    <MapPin size={16} /> 2. TASSE D ATTERRAGGIO (LANDING & HANDLING FEES)
+                  </div>
+                  <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                    <div className="font-bold text-white mb-2">{financialGuide.landing_fee_rules.formula}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {financialGuide.landing_fee_rules.categories.map((cat, idx) => (
+                        <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                          <div className="font-bold text-cyan-300">{cat.category}</div>
+                          <div className="text-slate-400 mt-1">Quota Base: <span className="text-white">{cat.base}</span></div>
+                          <div className="text-slate-400">Quota Peso: <span className="text-white">{cat.per_tonne}</span></div>
+                          <div className="text-[11px] text-emerald-400 mt-2 font-semibold">{cat.typical_cost}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Revenue Rules */}
+                <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm font-mono">
+                    <Briefcase size={16} /> 3. CALCOLO RICAVI DEI VOLI (JOB REWARDS)
+                  </div>
+                  <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                    <div className="font-bold text-white mb-2">{financialGuide.revenue_rules.formula}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {financialGuide.revenue_rules.breakdown.map((item, idx) => (
+                        <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                          <div className="font-bold text-slate-200">{item.component}</div>
+                          <div className="text-slate-400 mt-0.5">{item.description}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Touchdown & Wear Table */}
+                <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex items-center gap-2 text-amber-400 font-bold text-sm font-mono">
+                    <Wrench size={16} /> 4. MECCANICA USURA E ATTERRAGGI (TOUCHDOWN DYNAMICS)
+                  </div>
+                  <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                    <p className="text-slate-400 mb-3">
+                      Ogni componente si usura in proporzione al tempo di volo, ma lo stress maggiore si concentra all atterraggio e nelle manovre brusche:
+                    </p>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border border-slate-800 rounded">
+                        <thead className="bg-slate-900 text-slate-400">
+                          <tr>
+                            <th className="p-2.5">Giudizio Contatto</th>
+                            <th className="p-2.5">Soglie Telemetriche</th>
+                            <th className="p-2.5">Impatto su Gomme e Carrello</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60">
+                          {financialGuide.wear_and_maintenance_rules.touchdown_impact_table.map((row, idx) => (
+                            <tr key={idx} className="hover:bg-slate-800/30">
+                              <td className="p-2.5 font-bold text-white">{row.rating}</td>
+                              <td className="p-2.5 text-cyan-300">{row.fpm}</td>
+                              <td className="p-2.5 text-slate-300">{row.impact}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

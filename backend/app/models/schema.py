@@ -11,6 +11,7 @@ class Company(Base):
     cash_balance = Column(Float, default=150000.0)  # Starting capital
     reputation = Column(Float, default=100.0)  # 0 to 100%
     virtual_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    operating_day = Column(Integer, default=1)  # Virtual day counter (Day 1, 8, 15...)
     simbrief_username = Column(String, nullable=True, default="")
     simbrief_pilot_id = Column(String, nullable=True, default="")
 
@@ -141,3 +142,17 @@ class MaintenanceEvent(Base):
     health_restored_to = Column(Float, default=100.0)
     performed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     notes = Column(String, nullable=True)
+
+class FinancialTransaction(Base):
+    __tablename__ = "financial_transactions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    operating_day = Column(Integer, default=1)
+    category = Column(String, index=True) # "REVENUE", "FUEL", "LANDING_FEE", "MAINTENANCE", "LEASE", "FIXED_HANGAR", "FIXED_INSURANCE", "AIRCRAFT_PURCHASE"
+    title = Column(String)
+    description = Column(String, nullable=True)
+    amount_eur = Column(Float) # positive for income (+), negative for expense (-)
+    balance_after_eur = Column(Float) # running balance
+    related_aircraft_tail = Column(String, nullable=True)
+    related_flight_id = Column(Integer, nullable=True)

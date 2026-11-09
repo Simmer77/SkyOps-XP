@@ -1,6 +1,10 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+from datetime import datetime, timezone, timedelta
+from sqlalchemy.future import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
+from app.models.schema import Company, Aircraft, FlightLog, MaintenanceEvent, FinancialTransaction
 
 logger = logging.getLogger("SkyOps.Economy")
 
@@ -83,6 +87,261 @@ class EconomyService:
             "hangar_eur": hangar,
             "insurance_eur": insurance,
             "total_fixed_eur": round(hangar + insurance, 2)
+        }
+
+    @staticmethod
+    async def record_transaction(
+        session: AsyncSession,
+        category: str,
+        title: str,
+        amount_eur: float,
+        description: Optional[str] = None,
+        aircraft_tail: Optional[str] = None,
+        flight_id: Optional[int] = None,
+        company: Optional[Company] = None
+    ) -> FinancialTransaction:
+        """
+        Registra una transazione nel libro mastro (Ledger) e aggiorna la cassa aziendale se richiesto.
+        """
+        if not company:
+            comp_res = await session.execute(select(Company).limit(1))
+            company = comp_res.scalars().first()
+            if not company:
+                company = Company(cash_balance=175000.0, operating_day=1)
+                session.add(company)
+                await session.flush()
+
+        company.cash_balance = round(company.cash_balance + amount_eur, 2)
+        
+        tx = FinancialTransaction(
+            timestamp=datetime.now(timezone.utc),
+            operating_day=company.operating_day or 1,
+            category=category,
+            title=title,
+            description=description,
+            amount_eur=round(amount_eur, 2),
+            balance_after_eur=company.cash_balance,
+            related_aircraft_tail=aircraft_tail,
+            related_flight_id=flight_id
+        )
+        session.add(tx)
+        return tx
+
+    @staticmethod
+    async def get_projected_fixed_costs(session: AsyncSession, days: int = 7) -> Dict[str, Any]:
+        """
+        Calcola i costi fissi previsti per la flotta di proprietà per il prossimo periodo.
+        """
+        ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
+        owned_aircraft = ac_res.scalars().all()
+        
+        factor = days / 7.0
+        details = []
+        total_hangar = 0.0
+        total_insurance = 0.0
+        
+        for ac in owned_aircraft:
+            specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
+            hangar = round(specs["hangar_weekly_eur"] * factor, 2)
+            insurance = round(specs["insurance_weekly_eur"] * factor, 2)
+            subtotal = round(hangar + insurance, 2)
+            
+            total_hangar += hangar
+            total_insurance += insurance
+            details.append({
+                "aircraft_id": ac.id,
+                "tail_number": ac.tail_number,
+                "name": ac.name,
+                "category": ac.category,
+                "hangar_eur": hangar,
+                "insurance_eur": insurance,
+                "subtotal_eur": subtotal
+            })
+            
+        return {
+            "period_days": days,
+            "owned_aircraft_count": len(owned_aircraft),
+            "total_hangar_eur": round(total_hangar, 2),
+            "total_insurance_eur": round(total_insurance, 2),
+            "total_fixed_eur": round(total_hangar + total_insurance, 2),
+            "aircraft_breakdown": details
+        }
+
+    @staticmethod
+    async def advance_operating_cycle(session: AsyncSession, days: int = 7) -> Dict[str, Any]:
+        """
+        Avanza il giorno operativo e il calendario virtuale dell'azienda, addebitando
+        i costi fissi (hangar e assicurazione) per tutti gli aerei di proprietà.
+        """
+        comp_res = await session.execute(select(Company).limit(1))
+        company = comp_res.scalars().first()
+        if not company:
+            company = Company(cash_balance=175000.0, operating_day=1)
+            session.add(company)
+            await session.flush()
+            
+        old_day = company.operating_day or 1
+        old_date = company.virtual_date or datetime.now(timezone.utc)
+        
+        # 1. Fetch owned aircraft
+        ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
+        owned_aircraft = ac_res.scalars().all()
+        
+        factor = days / 7.0
+        total_deductions = 0.0
+        deductions_list = []
+        
+        for ac in owned_aircraft:
+            specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
+            hangar_cost = round(specs["hangar_weekly_eur"] * factor, 2)
+            insurance_cost = round(specs["insurance_weekly_eur"] * factor, 2)
+            
+            # Addebito Hangar
+            if hangar_cost > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="FIXED_HANGAR",
+                    title=f"Rimessaggio Hangar {ac.tail_number} ({days} gg)",
+                    amount_eur=-hangar_cost,
+                    description=f"Canone hangaraggio per {ac.name} presso {ac.current_icao} ({days} giorni simulati)",
+                    aircraft_tail=ac.tail_number,
+                    company=company
+                )
+                total_deductions += hangar_cost
+                
+            # Addebito Assicurazione
+            if insurance_cost > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="FIXED_INSURANCE",
+                    title=f"Polizza Corpi & RC {ac.tail_number} ({days} gg)",
+                    amount_eur=-insurance_cost,
+                    description=f"Copertura assicurativa Kasko/Corpi & RC Terzi {ac.name} ({days} giorni simulati)",
+                    aircraft_tail=ac.tail_number,
+                    company=company
+                )
+                total_deductions += insurance_cost
+                
+            deductions_list.append({
+                "tail_number": ac.tail_number,
+                "name": ac.name,
+                "hangar_cost": hangar_cost,
+                "insurance_cost": insurance_cost,
+                "total": round(hangar_cost + insurance_cost, 2)
+            })
+
+        # 2. Advance operational timeline
+        new_day = old_day + days
+        new_date = old_date + timedelta(days=days)
+        company.operating_day = new_day
+        company.virtual_date = new_date
+        
+        await session.commit()
+        await session.refresh(company)
+        
+        return {
+            "advanced_days": days,
+            "old_day": old_day,
+            "new_day": new_day,
+            "old_virtual_date": old_date.isoformat(),
+            "new_virtual_date": new_date.isoformat(),
+            "total_deductions_eur": round(total_deductions, 2),
+            "new_cash_balance_eur": company.cash_balance,
+            "deductions_by_aircraft": deductions_list
+        }
+
+    @staticmethod
+    async def get_financial_statement(session: AsyncSession) -> Dict[str, Any]:
+        """
+        Genera il Rendiconto Finanziario Completo:
+        - Stato Patrimoniale (Attivo Circolante, Flotta, Patrimonio Netto)
+        - Conto Economico (Ricavi Lordi, Costi Operativi DOC, Manutenzione, Costi Fissi, Risultato d'Esercizio)
+        - Previsioni Prossimo Ciclo Operativo
+        """
+        # 1. Company profile
+        comp_res = await session.execute(select(Company).limit(1))
+        company = comp_res.scalars().first()
+        if not company:
+            company = Company(cash_balance=175000.0, operating_day=1)
+            session.add(company)
+            await session.commit()
+            
+        # 2. Owned aircraft valuation
+        ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
+        owned_aircraft = ac_res.scalars().all()
+        fleet_book_value = sum(ac.purchase_price_eur or 0.0 for ac in owned_aircraft)
+        
+        # 3. Aggregates from FinancialTransactions (or flight logs & maintenance if transactions are new)
+        tx_res = await session.execute(select(FinancialTransaction))
+        transactions = tx_res.scalars().all()
+        
+        revenue_flight = sum(t.amount_eur for t in transactions if t.category in ["REVENUE", "REVENUE_FLIGHT"] and t.amount_eur > 0)
+        expense_fuel = abs(sum(t.amount_eur for t in transactions if t.category in ["FUEL", "EXPENSE_FUEL"]))
+        expense_landing = abs(sum(t.amount_eur for t in transactions if t.category in ["LANDING_FEE", "EXPENSE_LANDING"]))
+        expense_lease = abs(sum(t.amount_eur for t in transactions if t.category in ["LEASE", "EXPENSE_LEASE"]))
+        expense_maint = abs(sum(t.amount_eur for t in transactions if t.category in ["MAINTENANCE", "EXPENSE_MAINTENANCE"]))
+        expense_hangar = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_HANGAR"]))
+        expense_insurance = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_INSURANCE"]))
+        expense_purchases = abs(sum(t.amount_eur for t in transactions if t.category in ["AIRCRAFT_PURCHASE", "CAPITAL_PURCHASE"]))
+        
+        # If no transactions exist yet, calculate from existing flight logs & maintenance events to preserve history
+        if not transactions:
+            fl_res = await session.execute(select(FlightLog))
+            flights = fl_res.scalars().all()
+            revenue_flight = sum(f.revenue_usd or 0.0 for f in flights)
+            expense_fuel = sum(f.fuel_cost_usd or 0.0 for f in flights)
+            expense_landing = sum(f.landing_fee_usd or 0.0 for f in flights)
+            expense_lease = sum(f.lease_cost_usd or 0.0 for f in flights)
+            
+            mv_res = await session.execute(select(MaintenanceEvent))
+            events = mv_res.scalars().all()
+            expense_maint = sum(m.cost_usd or 0.0 for m in events)
+            
+        direct_operating_costs = round(expense_fuel + expense_landing + expense_lease, 2)
+        fixed_overheads = round(expense_hangar + expense_insurance, 2)
+        total_expenses = round(direct_operating_costs + expense_maint + fixed_overheads, 2)
+        net_profit = round(revenue_flight - total_expenses, 2)
+        margin_pct = round((net_profit / revenue_flight * 100.0), 1) if revenue_flight > 0 else 0.0
+        
+        # Next cycle projection
+        projections = await EconomyService.get_projected_fixed_costs(session, days=7)
+        
+        return {
+            "operating_day": company.operating_day or 1,
+            "virtual_date": (company.virtual_date or datetime.now(timezone.utc)).isoformat(),
+            
+            # Stato Patrimoniale (Balance Sheet)
+            "balance_sheet": {
+                "cash_balance_eur": company.cash_balance,
+                "fleet_book_value_eur": round(fleet_book_value, 2),
+                "total_net_worth_eur": round(company.cash_balance + fleet_book_value, 2),
+                "owned_aircraft_count": len(owned_aircraft)
+            },
+            
+            # Conto Economico (P&L Statement)
+            "income_statement": {
+                "gross_revenue_eur": round(revenue_flight, 2),
+                "direct_operating_costs": {
+                    "total_eur": direct_operating_costs,
+                    "fuel_eur": round(expense_fuel, 2),
+                    "landing_fees_eur": round(expense_landing, 2),
+                    "aircraft_leases_eur": round(expense_lease, 2)
+                },
+                "maintenance_costs": {
+                    "total_eur": round(expense_maint, 2)
+                },
+                "fixed_overheads": {
+                    "total_eur": fixed_overheads,
+                    "hangar_eur": round(expense_hangar, 2),
+                    "insurance_eur": round(expense_insurance, 2)
+                },
+                "total_expenses_eur": total_expenses,
+                "net_profit_eur": net_profit,
+                "profit_margin_pct": margin_pct
+            },
+            
+            # Previsioni Fisse Settimanali
+            "upcoming_fixed_costs_7d": projections
         }
 
     @staticmethod
