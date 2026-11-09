@@ -225,9 +225,15 @@ app.include_router(simbrief.router, prefix="/api")
 app.include_router(flights.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 
-# Serve Frontend static assets if built
+# Serve static uploaded images
 from fastapi.staticfiles import StaticFiles
 import os
+
+uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static/uploads"))
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+# Serve Frontend static assets if built
 
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../SkyOps-XP/frontend/dist"))
 if not os.path.exists(frontend_dist):

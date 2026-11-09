@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+import shutil
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional
@@ -244,6 +246,42 @@ async def update_aircraft(aircraft_id: int, data: AircraftUpdate, db: AsyncSessi
     await db.commit()
     await db.refresh(aircraft)
     return aircraft
+
+@router.post("/{aircraft_id}/upload_image")
+async def upload_aircraft_image(
+    aircraft_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Carica un file immagine dal computer e la associa all'aeromobile"""
+    aircraft = await db.get(Aircraft, aircraft_id)
+    if not aircraft:
+        raise HTTPException(status_code=404, detail="Aeromobile non trovato.")
+        
+    uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../static/uploads"))
+    os.makedirs(uploads_dir, exist_ok=True)
+    
+    ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
+    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+        ext = ".jpg"
+        
+    safe_tail = aircraft.tail_number.replace("-", "_").lower()
+    filename = f"aircraft_{safe_tail}_{aircraft_id}{ext}"
+    file_path = os.path.join(uploads_dir, filename)
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    image_url = f"/uploads/{filename}"
+    aircraft.image_url = image_url
+    await db.commit()
+    await db.refresh(aircraft)
+    
+    return {
+        "message": f"Immagine caricata e salvata con successo per {aircraft.tail_number}!",
+        "image_url": image_url,
+        "aircraft": aircraft
+    }
 
 @router.post("/{aircraft_id}/sync_xp")
 async def sync_aircraft_to_xp(aircraft_id: int, db: AsyncSession = Depends(get_db)):

@@ -311,6 +311,32 @@ export default function App() {
     }
   };
 
+  const handleImageFileUpload = async (file) => {
+    if (!file || !selectedAircraft) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/fleet/${selectedAircraft.id}/upload_image`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        setEditFormData(prev => ({ ...prev, image_url: data.image_url }));
+        setSelectedAircraft(data.aircraft);
+        fetchFleet();
+      } else {
+        showNotice(data.detail || 'Errore caricamento immagine', 'error');
+      }
+    } catch (err) {
+      showNotice('Errore durante l invio del file immagine', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Action: Rent Aircraft
   const handleRentAircraft = async () => {
     if (!selectedRentalTemplate) return;
@@ -863,12 +889,17 @@ export default function App() {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => openEditModal(selectedAircraft)}
-                      className="absolute top-3 right-3 bg-slate-900/80 hover:bg-cyan-600 text-white p-2 rounded-lg backdrop-blur-md border border-slate-700 text-xs font-mono flex items-center gap-1 shadow transition"
-                    >
-                      <Camera size={14} /> Cambia Foto
-                    </button>
+                    <label className="absolute top-3 right-3 bg-slate-900/90 hover:bg-cyan-600 text-white px-3 py-1.5 rounded-lg backdrop-blur-md border border-slate-700 text-xs font-mono flex items-center gap-1.5 shadow transition cursor-pointer z-10">
+                      <Camera size={14} /> Carica Foto PC
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) handleImageFileUpload(e.target.files[0]);
+                        }} 
+                      />
+                    </label>
                   </div>
 
                   {/* Right: Aircraft Overview & Operations */}
@@ -1085,7 +1116,7 @@ export default function App() {
                     <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-white">✕</button>
                   </div>
 
-                  <form onSubmit={handleUpdateAircraft} className="space-y-3 font-mono text-xs">
+                  <form onSubmit={handleUpdateAircraft} noValidate className="space-y-3 font-mono text-xs">
                     <div>
                       <label className="text-slate-400 block mb-1">Nome Modello & Versione</label>
                       <input
@@ -1097,17 +1128,33 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">URL Immagine Esterna (Web Link o file locale)</label>
+                      <label className="text-slate-400 block mb-1">Foto Velivolo</label>
+                      
+                      <div className="flex flex-wrap gap-2 items-center mb-2">
+                        <label className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-semibold flex items-center gap-1.5 cursor-pointer shadow transition">
+                          <Camera size={14} /> Carica File Foto dal PC
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => {
+                              if (e.target.files?.[0]) handleImageFileUpload(e.target.files[0]);
+                            }} 
+                          />
+                        </label>
+                        <span className="text-slate-500 text-[11px]">oppure inserisci un URL diretto:</span>
+                      </div>
+
                       <input
-                        type="url"
-                        placeholder="https://.../aereo.jpg"
+                        type="text"
+                        placeholder="https://... o /uploads/..."
                         value={editFormData.image_url || ''}
                         onChange={(e) => setEditFormData({...editFormData, image_url: e.target.value})}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
                       />
                       {editFormData.image_url && (
-                        <div className="mt-2 rounded overflow-hidden max-h-32 border border-slate-700">
-                          <img src={editFormData.image_url} alt="Anteprima" className="w-full h-32 object-cover" />
+                        <div className="mt-2 rounded overflow-hidden max-h-36 border border-slate-700 bg-slate-950 flex items-center justify-center">
+                          <img src={editFormData.image_url} alt="Anteprima" className="w-full h-36 object-cover" />
                         </div>
                       )}
                     </div>
@@ -1208,7 +1255,7 @@ export default function App() {
                     <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">✕</button>
                   </div>
 
-                  <form onSubmit={handleAddAircraft} className="space-y-3 font-mono text-xs">
+                  <form onSubmit={handleAddAircraft} noValidate className="space-y-3 font-mono text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-slate-400 block mb-1">Marche (Tail Number)*</label>
@@ -1315,14 +1362,42 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">URL Immagine Esterna (facoltativo)</label>
+                      <label className="text-slate-400 block mb-1">Foto Velivolo (Carica File dal PC o incolla URL)</label>
+                      
+                      <div className="flex flex-wrap gap-2 items-center mb-2">
+                        <label className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-semibold flex items-center gap-1.5 cursor-pointer shadow transition">
+                          <Camera size={14} /> Scegli File Immagine dal PC
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (ev) => {
+                                  setNewAircraft(prev => ({ ...prev, image_url: ev.target.result }));
+                                };
+                                reader.readAsDataURL(file);
+                              }
+                            }} 
+                          />
+                        </label>
+                        <span className="text-slate-500 text-[11px]">oppure inserisci un URL:</span>
+                      </div>
+
                       <input
-                        type="url"
-                        placeholder="https://.../aereo.jpg"
+                        type="text"
+                        placeholder="https://... o link foto"
                         value={newAircraft.image_url}
                         onChange={(e) => setNewAircraft({...newAircraft, image_url: e.target.value})}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
                       />
+                      {newAircraft.image_url && (
+                        <div className="mt-2 rounded overflow-hidden max-h-36 border border-slate-700 bg-slate-950 flex items-center justify-center">
+                          <img src={newAircraft.image_url} alt="Anteprima" className="w-full h-36 object-cover" />
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">

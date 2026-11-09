@@ -44,3 +44,7 @@ skyops.db
 .idea/
 .DS_Store
 Thumbs.db
+
+# Uploads
+backend/app/static/uploads/*
+!backend/app/static/uploads/.gitkeep
