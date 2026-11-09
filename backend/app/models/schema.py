@@ -38,6 +38,19 @@ class Aircraft(Base):
     tbo_hours = Column(Float, default=3500.0)
     last_inspection_hours = Column(Float, default=100.0)
     
+    # Specifications & History
+    year_manufactured = Column(Integer, default=2021)
+    purchase_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    purchase_price_eur = Column(Float, default=1850000.0)
+    image_url = Column(String, nullable=True, default="")
+    engine_type = Column(String, default="1x Williams FJ33-5A Turbofan")
+    avionics_system = Column(String, default="Garmin Perspective+ (G3000)")
+    
+    # Inspection dead-lines
+    next_annual_inspection = Column(DateTime, nullable=True)
+    next_50h_inspection_hours = Column(Float, default=100.0)
+    next_100h_inspection_hours = Column(Float, default=200.0)
+
     # Health percentages (100% = Factory new, < 20% = Critical Failure risk)
     health_engine_pct = Column(Float, default=98.5)
     health_brakes_pct = Column(Float, default=95.0)

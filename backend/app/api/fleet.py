@@ -92,6 +92,24 @@ class AircraftCreate(BaseModel):
     fuel_capacity_kg: float = 900.0
     fuel_quantity_kg: float = 450.0
     hourly_lease_rate: float = 0.0
+    year_manufactured: int = 2021
+    purchase_price_eur: float = 0.0
+    image_url: Optional[str] = ""
+    engine_type: Optional[str] = "Standard"
+    avionics_system: Optional[str] = "Standard Avionics"
+
+class AircraftUpdate(BaseModel):
+    name: Optional[str] = None
+    aircraft_type: Optional[str] = None
+    category: Optional[str] = None
+    current_icao: Optional[str] = None
+    fuel_capacity_kg: Optional[float] = None
+    fuel_quantity_kg: Optional[float] = None
+    year_manufactured: Optional[int] = None
+    purchase_price_eur: Optional[float] = None
+    image_url: Optional[str] = None
+    engine_type: Optional[str] = None
+    avionics_system: Optional[str] = None
 
 class RentAircraftRequest(BaseModel):
     template_id: str
@@ -180,6 +198,8 @@ async def create_aircraft(data: AircraftCreate, db: AsyncSession = Depends(get_d
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="Aeromobile con questa marche (Tail Number) già presente.")
         
+    from datetime import datetime, timezone, timedelta
+
     aircraft = Aircraft(
         tail_number=data.tail_number.upper(),
         aircraft_type=data.aircraft_type.upper(),
@@ -190,6 +210,14 @@ async def create_aircraft(data: AircraftCreate, db: AsyncSession = Depends(get_d
         fuel_capacity_kg=data.fuel_capacity_kg,
         fuel_quantity_kg=data.fuel_quantity_kg,
         hourly_lease_rate=data.hourly_lease_rate,
+        year_manufactured=data.year_manufactured,
+        purchase_price_eur=data.purchase_price_eur,
+        image_url=data.image_url or "",
+        engine_type=data.engine_type or "Standard",
+        avionics_system=data.avionics_system or "Standard Avionics",
+        next_annual_inspection=datetime.now(timezone.utc) + timedelta(days=365),
+        next_50h_inspection_hours=50.0,
+        next_100h_inspection_hours=100.0,
         health_engine_pct=100.0,
         health_brakes_pct=100.0,
         health_tires_pct=100.0,
@@ -197,6 +225,22 @@ async def create_aircraft(data: AircraftCreate, db: AsyncSession = Depends(get_d
         health_avionics_pct=100.0
     )
     db.add(aircraft)
+    await db.commit()
+    await db.refresh(aircraft)
+    return aircraft
+
+@router.put("/{aircraft_id}")
+async def update_aircraft(aircraft_id: int, data: AircraftUpdate, db: AsyncSession = Depends(get_db)):
+    """Aggiorna i dettagli (immagine, motore, anno, prezzo) di un aeromobile"""
+    aircraft = await db.get(Aircraft, aircraft_id)
+    if not aircraft:
+        raise HTTPException(status_code=404, detail="Aeromobile non trovato.")
+        
+    update_data = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else data.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        if value is not None:
+            setattr(aircraft, key, value)
+            
     await db.commit()
     await db.refresh(aircraft)
     return aircraft
@@ -284,6 +328,15 @@ async def perform_service(aircraft_id: int, req: ServiceRequest, db: AsyncSessio
     if "avionics_health_gain" in srv:
         aircraft.health_avionics_pct = min(100.0, aircraft.health_avionics_pct + srv["avionics_health_gain"])
         
+    if req.service_code == "OIL_AND_FILTER":
+        aircraft.next_50h_inspection_hours = round(aircraft.airframe_hours + 50.0, 1)
+    elif req.service_code == "INSPECTION_100H":
+        aircraft.next_100h_inspection_hours = round(aircraft.airframe_hours + 100.0, 1)
+        aircraft.next_50h_inspection_hours = round(aircraft.airframe_hours + 50.0, 1)
+    elif req.service_code == "ANNUAL_INSPECTION":
+        from datetime import datetime, timezone, timedelta
+        aircraft.next_annual_inspection = datetime.now(timezone.utc) + timedelta(days=365)
+
     event = MaintenanceEvent(
         aircraft_id=aircraft.id,
         event_type=req.service_code,

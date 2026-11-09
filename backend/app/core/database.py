@@ -13,3 +13,22 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+        # Safe migration for existing SQLite database to add newly introduced columns
+        from sqlalchemy import text
+        new_cols = [
+            ("year_manufactured", "INTEGER DEFAULT 2021"),
+            ("purchase_date", "DATETIME"),
+            ("purchase_price_eur", "FLOAT DEFAULT 0.0"),
+            ("image_url", "TEXT DEFAULT ''"),
+            ("engine_type", "TEXT DEFAULT 'Standard'"),
+            ("avionics_system", "TEXT DEFAULT 'Standard Avionics'"),
+            ("next_annual_inspection", "DATETIME"),
+            ("next_50h_inspection_hours", "FLOAT DEFAULT 50.0"),
+            ("next_100h_inspection_hours", "FLOAT DEFAULT 100.0"),
+        ]
+        for col_name, col_type in new_cols:
+            try:
+                await conn.execute(text(f"ALTER TABLE aircraft ADD COLUMN {col_name} {col_type}"))
+            except Exception:
+                pass # Column already exists

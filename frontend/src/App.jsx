@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plane, Gauge, Briefcase, Wrench, BookOpen, Radio, 
   Fuel, AlertTriangle, CheckCircle, ArrowRight, RefreshCw, 
-  MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock
+  MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock,
+  Edit3, Camera, Calendar, Cpu
 } from 'lucide-react';
 
 export default function App() {
@@ -29,8 +30,17 @@ export default function App() {
     category: 'GA',
     current_icao: 'LIRN',
     fuel_capacity_kg: 900,
-    fuel_quantity_kg: 450
+    fuel_quantity_kg: 450,
+    year_manufactured: 2022,
+    purchase_price_eur: 1850000,
+    image_url: '',
+    engine_type: '',
+    avionics_system: ''
   });
+
+  // Modal State for editing aircraft
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFormData, setEditFormData] = useState({});
 
   // Modal State for renting
   const [showRentModal, setShowRentModal] = useState(false);
@@ -220,7 +230,12 @@ export default function App() {
           current_icao: (newAircraft.current_icao || 'LIRN').toUpperCase().trim(),
           fuel_capacity_kg: parseFloat(newAircraft.fuel_capacity_kg) || 900,
           fuel_quantity_kg: parseFloat(newAircraft.fuel_quantity_kg) || 450,
-          hourly_lease_rate: 0.0
+          hourly_lease_rate: 0.0,
+          year_manufactured: parseInt(newAircraft.year_manufactured) || 2021,
+          purchase_price_eur: parseFloat(newAircraft.purchase_price_eur) || 0.0,
+          image_url: newAircraft.image_url || '',
+          engine_type: newAircraft.engine_type || 'Standard',
+          avionics_system: newAircraft.avionics_system || 'Standard Avionics'
         })
       });
       const data = await res.json();
@@ -234,14 +249,63 @@ export default function App() {
           category: 'GA',
           current_icao: 'LIRN',
           fuel_capacity_kg: 900,
-          fuel_quantity_kg: 450
+          fuel_quantity_kg: 450,
+          year_manufactured: 2022,
+          purchase_price_eur: 1850000,
+          image_url: '',
+          engine_type: '',
+          avionics_system: ''
         });
         fetchFleet();
+        setSelectedAircraft(data);
       } else {
         showNotice(data.detail, 'error');
       }
     } catch (e) {
       showNotice('Errore durante il salvataggio dell aeromobile', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openEditModal = (aircraft) => {
+    setEditFormData({
+      name: aircraft.name || '',
+      aircraft_type: aircraft.aircraft_type || '',
+      category: aircraft.category || 'GA',
+      current_icao: aircraft.current_icao || 'LIRN',
+      fuel_capacity_kg: aircraft.fuel_capacity_kg || 900,
+      fuel_quantity_kg: aircraft.fuel_quantity_kg || 450,
+      year_manufactured: aircraft.year_manufactured || 2021,
+      purchase_price_eur: aircraft.purchase_price_eur || 0,
+      image_url: aircraft.image_url || '',
+      engine_type: aircraft.engine_type || '',
+      avionics_system: aircraft.avionics_system || ''
+    });
+    setShowEditModal(true);
+  };
+
+  const handleUpdateAircraft = async (e) => {
+    e.preventDefault();
+    if (!selectedAircraft) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/fleet/${selectedAircraft.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editFormData)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(`Scheda tecnica di ${data.tail_number} aggiornata!`, 'success');
+        setShowEditModal(false);
+        fetchFleet();
+        setSelectedAircraft(data);
+      } else {
+        showNotice(data.detail, 'error');
+      }
+    } catch (e) {
+      showNotice('Errore durante l aggiornamento', 'error');
     } finally {
       setLoading(false);
     }
@@ -709,29 +773,434 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: HANGAR & OWNED FLEET */}
+        {/* TAB 2: HANGAR & OWNED FLEET (DETAILED VIEW WITH DROPDOWN) */}
         {activeTab === 'fleet' && (
           <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+            {/* Top Toolbar with Dropdown */}
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-xl font-bold text-white">Hangar Personale (Aerei di Proprietà)</h2>
-                <p className="text-xs text-slate-400 font-mono">
-                  Inserisci i tuoi aerei personalizzati, gestisci il parcheggio e rifornisci i serbatoi prima del volo.
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Plane size={22} className="text-cyan-400 rotate-45" /> Hangar Personale (Aerei di Proprietà)
+                </h2>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  Scheda tecnica, cronistoria d'acquisto, motorizzazione e scadenziario manutenzioni per ogni velivolo.
                 </p>
               </div>
 
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold font-mono text-xs px-4 py-2 rounded-lg shadow transition"
-              >
-                <Plus size={16} /> Aggiungi Aeromobile di Proprietà
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Aircraft Dropdown Selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-slate-400 uppercase font-semibold">Aereo:</span>
+                  <select
+                    value={selectedAircraft?.id || ''}
+                    onChange={(e) => {
+                      const ac = fleet.find(a => a.id === parseInt(e.target.value));
+                      if (ac) setSelectedAircraft(ac);
+                    }}
+                    className="bg-slate-900 border border-cyan-500/50 text-cyan-300 font-mono font-bold text-sm px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-400 cursor-pointer shadow-lg"
+                  >
+                    {fleet.filter(a => a.ownership === 'OWNED').map((ac) => (
+                      <option key={ac.id} value={ac.id} className="bg-slate-900 text-white">
+                        {ac.tail_number} — {ac.name} @ {ac.current_icao}
+                      </option>
+                    ))}
+                    {fleet.filter(a => a.ownership === 'OWNED').length === 0 && (
+                      <option value="">Nessun aereo presente</option>
+                    )}
+                  </select>
+                </div>
+
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold font-mono text-xs px-3.5 py-2 rounded-lg shadow transition"
+                >
+                  <Plus size={15} /> Aggiungi Aereo
+                </button>
+
+                {selectedAircraft && selectedAircraft.ownership === 'OWNED' && (
+                  <>
+                    <button
+                      onClick={() => openEditModal(selectedAircraft)}
+                      className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold font-mono text-xs px-3.5 py-2 rounded-lg transition"
+                    >
+                      <Edit3 size={14} className="text-amber-400" /> Modifica Dati & Foto
+                    </button>
+                    <button
+                      onClick={() => handleDeleteAircraft(selectedAircraft)}
+                      title="Elimina dall hangar"
+                      className="p-2 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
-            {/* Add Aircraft Modal */}
+            {/* Selected Aircraft Full Presentation */}
+            {selectedAircraft && selectedAircraft.ownership === 'OWNED' ? (
+              <div className="space-y-6">
+                {/* Hero Showcase Card */}
+                <div className="glass-panel rounded-2xl border border-slate-800 overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-0">
+                  {/* Left: Aircraft Photo / Blueprint Banner */}
+                  <div className="lg:col-span-5 relative bg-slate-950 min-h-[260px] flex items-center justify-center overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-800">
+                    {selectedAircraft.image_url ? (
+                      <img 
+                        src={selectedAircraft.image_url} 
+                        alt={selectedAircraft.name}
+                        className="w-full h-full object-cover min-h-[260px]"
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                      />
+                    ) : null}
+                    
+                    {/* Fallback Graphic if no image */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/60 to-transparent flex flex-col justify-end p-5 pointer-events-none">
+                      <div className="text-3xl font-black font-mono tracking-wider text-cyan-400/90 drop-shadow">
+                        {selectedAircraft.tail_number}
+                      </div>
+                      <div className="text-xs font-mono text-slate-300">
+                        {selectedAircraft.aircraft_type} • {selectedAircraft.category}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => openEditModal(selectedAircraft)}
+                      className="absolute top-3 right-3 bg-slate-900/80 hover:bg-cyan-600 text-white p-2 rounded-lg backdrop-blur-md border border-slate-700 text-xs font-mono flex items-center gap-1 shadow transition"
+                    >
+                      <Camera size={14} /> Cambia Foto
+                    </button>
+                  </div>
+
+                  {/* Right: Aircraft Overview & Operations */}
+                  <div className="lg:col-span-7 p-6 flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl font-black text-white">{selectedAircraft.name}</span>
+                          <span className="text-xs px-2.5 py-0.5 rounded font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                            {selectedAircraft.category}
+                          </span>
+                        </div>
+                        <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          DI PROPRIETÀ
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 font-mono text-xs">
+                        <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                          <div className="text-slate-400">Anno Fabbricazione</div>
+                          <div className="text-base font-bold text-white mt-0.5">{selectedAircraft.year_manufactured || 2021}</div>
+                        </div>
+
+                        <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                          <div className="text-slate-400">Data Acquisto</div>
+                          <div className="text-base font-bold text-white mt-0.5">
+                            {selectedAircraft.purchase_date ? new Date(selectedAircraft.purchase_date).toLocaleDateString() : 'N/D'}
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                          <div className="text-slate-400">Valore di Acquisto</div>
+                          <div className="text-base font-bold text-emerald-400 mt-0.5">
+                            {formatEuro(selectedAircraft.purchase_price_eur || 0)}
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
+                          <div className="text-slate-400">Aeroporto Base</div>
+                          <div className="text-base font-bold text-cyan-300 mt-0.5 flex items-center gap-1">
+                            <MapPin size={14} className="text-rose-400" /> {selectedAircraft.current_icao}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Fuel & Actions */}
+                    <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-mono text-xs">
+                        <span className="text-slate-400">Carburante Attuale: </span>
+                        <span className="text-purple-300 font-bold">{selectedAircraft.fuel_quantity_kg.toFixed(0)} kg</span>
+                        <span className="text-slate-500"> / {selectedAircraft.fuel_capacity_kg.toFixed(0)} kg</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleSyncToXplane(selectedAircraft.id)}
+                          className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 transition"
+                        >
+                          <RefreshCw size={13} /> Sincronizza su XP12
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const target = prompt(`Inserisci quantità carburante desiderata in kg (Max ${selectedAircraft.fuel_capacity_kg} kg):`, selectedAircraft.fuel_capacity_kg);
+                            if (target) {
+                              const res = await fetch(`/api/fleet/${selectedAircraft.id}/refuel`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ target_fuel_kg: parseFloat(target) })
+                              });
+                              const data = await res.json();
+                              showNotice(data.message, 'success');
+                              fetchStatus();
+                              fetchFleet();
+                            }
+                          }}
+                          className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition"
+                        >
+                          <Fuel size={13} /> Rifornisci
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3 Detailed Technical Inspection Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-mono text-xs">
+                  {/* Card 1: Powerplant & Avionics */}
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
+                      <Cpu size={16} className="text-cyan-400" /> Propulsione & Avionica
+                    </h3>
+                    <div className="space-y-2 text-slate-300">
+                      <div>
+                        <div className="text-slate-400 text-[11px]">Motorizzazione</div>
+                        <div className="font-bold text-white">{selectedAircraft.engine_type || 'Standard Turbofan/Piston'}</div>
+                      </div>
+                      <div>
+                        <div className="text-slate-400 text-[11px]">Suite Avionica</div>
+                        <div className="font-bold text-white">{selectedAircraft.avionics_system || 'Standard Flight Deck'}</div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
+                        <div>
+                          <div className="text-slate-400">Ore Cellula:</div>
+                          <div className="font-bold text-cyan-300 text-sm">{selectedAircraft.airframe_hours.toFixed(1)} h</div>
+                        </div>
+                        <div>
+                          <div className="text-slate-400">Ore Motore:</div>
+                          <div className="font-bold text-emerald-300 text-sm">{selectedAircraft.engine_hours.toFixed(1)} h</div>
+                        </div>
+                      </div>
+                      <div className="pt-2 text-[11px] text-slate-400">
+                        Ore residue al TBO Motore: <span className="text-amber-300 font-bold">{(selectedAircraft.tbo_hours - selectedAircraft.engine_hours).toFixed(1)} h</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Maintenance Deadlines */}
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
+                      <Calendar size={16} className="text-amber-400" /> Scadenziario Manutenzioni
+                    </h3>
+                    
+                    {/* 50h check */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-slate-300">
+                        <span>Tagliando 50 Ore (Olio):</span>
+                        <span className="font-bold text-white">
+                          {Math.max(0, (selectedAircraft.next_50h_inspection_hours || 50) - selectedAircraft.airframe_hours).toFixed(1)} h rimaste
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-1.5">
+                        <div 
+                          className="bg-emerald-500 h-1.5 rounded-full" 
+                          style={{ width: `${Math.min(100, Math.max(5, (1 - ((selectedAircraft.next_50h_inspection_hours || 50) - selectedAircraft.airframe_hours) / 50) * 100))}%` }} 
+                        />
+                      </div>
+                    </div>
+
+                    {/* 100h check */}
+                    <div className="space-y-1 pt-1">
+                      <div className="flex justify-between text-slate-300">
+                        <span>Ispezione 100 Ore:</span>
+                        <span className="font-bold text-white">
+                          {Math.max(0, (selectedAircraft.next_100h_inspection_hours || 100) - selectedAircraft.airframe_hours).toFixed(1)} h rimaste
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-800 rounded-full h-1.5">
+                        <div 
+                          className="bg-cyan-500 h-1.5 rounded-full" 
+                          style={{ width: `${Math.min(100, Math.max(5, (1 - ((selectedAircraft.next_100h_inspection_hours || 100) - selectedAircraft.airframe_hours) / 100) * 100))}%` }} 
+                        />
+                      </div>
+                    </div>
+
+                    {/* Annual check */}
+                    <div className="pt-2 border-t border-slate-800/80">
+                      <div className="text-slate-400 text-[11px]">Scadenza Ispezione Annuale Certificata:</div>
+                      <div className="text-emerald-400 font-bold text-sm mt-0.5">
+                        {selectedAircraft.next_annual_inspection ? new Date(selectedAircraft.next_annual_inspection).toLocaleDateString() : 'Valida (12 Mesi)'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Health Overview */}
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
+                      <Wrench size={16} className="text-emerald-400" /> Integrità Componenti
+                    </h3>
+                    <div className="space-y-2">
+                      {[
+                        { label: 'Motore', pct: selectedAircraft.health_engine_pct },
+                        { label: 'Freni & Pastiglie', pct: selectedAircraft.health_brakes_pct },
+                        { label: 'Pneumatici', pct: selectedAircraft.health_tires_pct },
+                        { label: 'Struttura Cellula', pct: selectedAircraft.health_airframe_pct },
+                      ].map((item, idx) => (
+                        <div key={idx}>
+                          <div className="flex justify-between text-[11px] text-slate-300 mb-0.5">
+                            <span>{item.label}</span>
+                            <span className="font-bold text-white">{item.pct.toFixed(0)}%</span>
+                          </div>
+                          <div className="w-full bg-slate-800 rounded-full h-1.5">
+                            <div 
+                              className={`h-1.5 rounded-full ${item.pct > 75 ? 'bg-emerald-500' : item.pct > 40 ? 'bg-amber-500' : 'bg-rose-500'}`}
+                              style={{ width: `${item.pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-16 glass-panel rounded-xl border border-dashed border-slate-800">
+                <p className="text-slate-400 font-mono text-sm">Nessun aereo di proprietà selezionato o presente nell hangar.</p>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="mt-3 text-cyan-400 hover:underline font-mono text-xs flex items-center gap-1 mx-auto"
+                >
+                  <Plus size={14} /> Clicca qui per aggiungere un aereo di proprietà
+                </button>
+              </div>
+            )}
+
+            {/* Modal: Edit Aircraft Details & Photo */}
+            {showEditModal && selectedAircraft && (
+              <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Edit3 size={18} className="text-cyan-400" /> Modifica Dati Velivolo ({selectedAircraft.tail_number})
+                    </h3>
+                    <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-white">✕</button>
+                  </div>
+
+                  <form onSubmit={handleUpdateAircraft} className="space-y-3 font-mono text-xs">
+                    <div>
+                      <label className="text-slate-400 block mb-1">Nome Modello & Versione</label>
+                      <input
+                        type="text"
+                        value={editFormData.name || ''}
+                        onChange={(e) => setEditFormData({...editFormData, name: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">URL Immagine Esterna (Web Link o file locale)</label>
+                      <input
+                        type="url"
+                        placeholder="https://.../aereo.jpg"
+                        value={editFormData.image_url || ''}
+                        onChange={(e) => setEditFormData({...editFormData, image_url: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                      {editFormData.image_url && (
+                        <div className="mt-2 rounded overflow-hidden max-h-32 border border-slate-700">
+                          <img src={editFormData.image_url} alt="Anteprima" className="w-full h-32 object-cover" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Anno Fabbricazione</label>
+                        <input
+                          type="number"
+                          value={editFormData.year_manufactured || 2021}
+                          onChange={(e) => setEditFormData({...editFormData, year_manufactured: parseInt(e.target.value)})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Prezzo Acquisto (€)</label>
+                        <input
+                          type="number"
+                          value={editFormData.purchase_price_eur || 0}
+                          onChange={(e) => setEditFormData({...editFormData, purchase_price_eur: parseFloat(e.target.value)})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Motorizzazione</label>
+                      <input
+                        type="text"
+                        placeholder="es. 1x Williams International FJ33-5A Turbofan"
+                        value={editFormData.engine_type || ''}
+                        onChange={(e) => setEditFormData({...editFormData, engine_type: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Suite Avionica</label>
+                      <input
+                        type="text"
+                        placeholder="es. Cirrus Perspective+ by Garmin"
+                        value={editFormData.avionics_system || ''}
+                        onChange={(e) => setEditFormData({...editFormData, avionics_system: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Aeroporto Stazionamento (ICAO)</label>
+                        <input
+                          type="text"
+                          value={editFormData.current_icao || ''}
+                          onChange={(e) => setEditFormData({...editFormData, current_icao: e.target.value.toUpperCase()})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Capacità Serbatoio (kg)</label>
+                        <input
+                          type="number"
+                          value={editFormData.fuel_capacity_kg || 900}
+                          onChange={(e) => setEditFormData({...editFormData, fuel_capacity_kg: parseFloat(e.target.value)})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setShowEditModal(false)}
+                        className="px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                      >
+                        Annulla
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
+                      >
+                        Salva Modifiche
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Modal: Add Aircraft */}
             {showAddModal && (
               <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-lg w-full space-y-4">
+                <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 className="text-base font-bold text-white flex items-center gap-2">
                       <Plus size={18} className="text-cyan-400" /> Aggiungi Aeromobile all Hangar
@@ -740,33 +1209,20 @@ export default function App() {
                   </div>
 
                   <form onSubmit={handleAddAircraft} className="space-y-3 font-mono text-xs">
-                    <div>
-                      <label className="text-slate-400 block mb-1">Marche / Registrazione (Tail Number)*</label>
-                      <input
-                        type="text"
-                        placeholder="es. I-SF50, N172SP, I-ALPA"
-                        required
-                        value={newAircraft.tail_number}
-                        onChange={(e) => setNewAircraft({...newAircraft, tail_number: e.target.value.toUpperCase()})}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-slate-400 block mb-1">Nome Modello & Versione*</label>
-                      <input
-                        type="text"
-                        placeholder="es. Cirrus Vision SF50 G2, Phenom 300, Cessna 172"
-                        required
-                        value={newAircraft.name}
-                        onChange={(e) => setNewAircraft({...newAircraft, name: e.target.value})}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Tipo ICAO (es. SF50, B738, C172)</label>
+                        <label className="text-slate-400 block mb-1">Marche (Tail Number)*</label>
+                        <input
+                          type="text"
+                          placeholder="es. I-ALPA, N516SF"
+                          required
+                          value={newAircraft.tail_number}
+                          onChange={(e) => setNewAircraft({...newAircraft, tail_number: e.target.value.toUpperCase()})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Tipo ICAO (es. SF50, C172, B738)</label>
                         <input
                           type="text"
                           placeholder="es. SF50"
@@ -775,6 +1231,21 @@ export default function App() {
                           className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
                         />
                       </div>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Nome Modello & Versione*</label>
+                      <input
+                        type="text"
+                        placeholder="es. Cirrus Vision SF50 G2"
+                        required
+                        value={newAircraft.name}
+                        onChange={(e) => setNewAircraft({...newAircraft, name: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-slate-400 block mb-1">Categoria Operativa</label>
                         <select
@@ -787,11 +1258,8 @@ export default function App() {
                           <option value="AIRLINER">AIRLINER (Linea Commerciale)</option>
                         </select>
                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Aeroporto ICAO</label>
+                        <label className="text-slate-400 block mb-1">Aeroporto ICAO Iniziale</label>
                         <input
                           type="text"
                           placeholder="es. LIRN"
@@ -801,6 +1269,63 @@ export default function App() {
                           className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
                         />
                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Anno Fabbricazione</label>
+                        <input
+                          type="number"
+                          value={newAircraft.year_manufactured}
+                          onChange={(e) => setNewAircraft({...newAircraft, year_manufactured: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Prezzo Acquisto (€)</label>
+                        <input
+                          type="number"
+                          value={newAircraft.purchase_price_eur}
+                          onChange={(e) => setNewAircraft({...newAircraft, purchase_price_eur: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Motorizzazione</label>
+                      <input
+                        type="text"
+                        placeholder="es. 1x Williams International FJ33-5A Turbofan"
+                        value={newAircraft.engine_type}
+                        onChange={(e) => setNewAircraft({...newAircraft, engine_type: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Suite Avionica</label>
+                      <input
+                        type="text"
+                        placeholder="es. Cirrus Perspective+ Garmin G3000"
+                        value={newAircraft.avionics_system}
+                        onChange={(e) => setNewAircraft({...newAircraft, avionics_system: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">URL Immagine Esterna (facoltativo)</label>
+                      <input
+                        type="url"
+                        placeholder="https://.../aereo.jpg"
+                        value={newAircraft.image_url}
+                        onChange={(e) => setNewAircraft({...newAircraft, image_url: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-slate-400 block mb-1">Capacità Fuel (kg)</label>
                         <input
@@ -841,122 +1366,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
-            {/* Fleet Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {fleet.filter(ac => ac.ownership === 'OWNED').map((ac) => {
-                const isSelected = selectedAircraft?.id === ac.id;
-                return (
-                  <div 
-                    key={ac.id} 
-                    className={`glass-panel p-5 rounded-xl border transition-all ${
-                      isSelected ? 'border-cyan-500/80 ring-1 ring-cyan-500/50' : 'border-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg font-black font-mono text-cyan-400">{ac.tail_number}</span>
-                          <span className="text-xs px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-300">
-                            {ac.category}
-                          </span>
-                          <span className="text-xs px-2 py-0.5 rounded font-mono bg-emerald-500/20 text-emerald-300">
-                            DI PROPRIETÀ
-                          </span>
-                        </div>
-                        <h3 className="text-sm font-semibold text-white mt-1">{ac.name}</h3>
-                        <p className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1">
-                          <MapPin size={12} className="text-rose-400" /> Stazionato a: <span className="text-white font-bold">{ac.current_icao}</span>
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setSelectedAircraft(ac)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold font-mono ${
-                            isSelected ? 'bg-cyan-500 text-black' : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                          }`}
-                        >
-                          {isSelected ? 'AEREO ATTIVO' : 'SELEZIONA'}
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAircraft(ac)}
-                          title="Elimina dall hangar"
-                          className="p-1.5 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 transition"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Fuel & Hours Progress */}
-                    <div className="mt-4 space-y-3 font-mono text-xs">
-                      <div>
-                        <div className="flex justify-between text-slate-400 mb-1">
-                          <span>Carburante Serbatoio: {ac.fuel_quantity_kg.toFixed(0)} / {ac.fuel_capacity_kg.toFixed(0)} kg</span>
-                          <span>{((ac.fuel_quantity_kg / ac.fuel_capacity_kg) * 100).toFixed(0)}%</span>
-                        </div>
-                        <div className="w-full bg-slate-800 rounded-full h-2">
-                          <div 
-                            className="bg-purple-500 h-2 rounded-full" 
-                            style={{ width: `${Math.min(100, (ac.fuel_quantity_kg / ac.fuel_capacity_kg) * 100)}%` }} 
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 text-slate-400 pt-2 border-t border-slate-800/80">
-                        <div>Ore Cellula: <span className="text-white">{ac.airframe_hours.toFixed(1)} h</span></div>
-                        <div>Ore Motore: <span className="text-white">{ac.engine_hours.toFixed(1)} h</span></div>
-                        <div>Salute Motore: <span className="text-emerald-400 font-bold">{ac.health_engine_pct.toFixed(0)}%</span></div>
-                        <div>Freni & Gomme: <span className="text-cyan-400 font-bold">{ac.health_tires_pct.toFixed(0)}%</span></div>
-                      </div>
-                    </div>
-
-                    {/* Action buttons */}
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => handleSyncToXplane(ac.id)}
-                        className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30"
-                      >
-                        <RefreshCw size={13} /> Sincronizza su XP12
-                      </button>
-
-                      <button
-                        onClick={async () => {
-                          const target = prompt(`Inserisci quantità carburante desiderata in kg (Max ${ac.fuel_capacity_kg} kg):`, ac.fuel_capacity_kg);
-                          if (target) {
-                            const res = await fetch(`/api/fleet/${ac.id}/refuel`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ target_fuel_kg: parseFloat(target) })
-                            });
-                            const data = await res.json();
-                            showNotice(data.message, 'success');
-                            fetchStatus();
-                            fetchFleet();
-                          }
-                        }}
-                        className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30"
-                      >
-                        <Fuel size={13} /> Rifornisci
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {fleet.filter(ac => ac.ownership === 'OWNED').length === 0 && (
-                <div className="col-span-2 text-center py-12 glass-panel rounded-xl border border-dashed border-slate-800">
-                  <p className="text-slate-400 font-mono text-sm">Non hai ancora inserito nessun aereo di proprietà nel tuo hangar.</p>
-                  <button
-                    onClick={() => setShowAddModal(true)}
-                    className="mt-3 text-cyan-400 hover:underline font-mono text-xs flex items-center gap-1 mx-auto"
-                  >
-                    <Plus size={14} /> Clicca qui per aggiungere il tuo primo aereo di proprietà
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
