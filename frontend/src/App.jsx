@@ -32,6 +32,7 @@ export default function App() {
     fuel_capacity_kg: 900,
     fuel_quantity_kg: 450,
     year_manufactured: 2022,
+    purchase_date: new Date().toISOString().split('T')[0],
     purchase_price_eur: 1850000,
     image_url: '',
     engine_type: '',
@@ -232,6 +233,7 @@ export default function App() {
           fuel_quantity_kg: parseFloat(newAircraft.fuel_quantity_kg) || 450,
           hourly_lease_rate: 0.0,
           year_manufactured: parseInt(newAircraft.year_manufactured) || 2021,
+          purchase_date: newAircraft.purchase_date || null,
           purchase_price_eur: parseFloat(newAircraft.purchase_price_eur) || 0.0,
           image_url: newAircraft.image_url || '',
           engine_type: newAircraft.engine_type || 'Standard',
@@ -251,6 +253,7 @@ export default function App() {
           fuel_capacity_kg: 900,
           fuel_quantity_kg: 450,
           year_manufactured: 2022,
+          purchase_date: new Date().toISOString().split('T')[0],
           purchase_price_eur: 1850000,
           image_url: '',
           engine_type: '',
@@ -269,7 +272,17 @@ export default function App() {
   };
 
   const openEditModal = (aircraft) => {
+    let pDate = '';
+    if (aircraft.purchase_date) {
+      try {
+        pDate = aircraft.purchase_date.split('T')[0];
+      } catch (e) {
+        pDate = '';
+      }
+    }
     setEditFormData({
+      tail_number: aircraft.tail_number || '',
+      purchase_date: pDate,
       name: aircraft.name || '',
       aircraft_type: aircraft.aircraft_type || '',
       category: aircraft.category || 'GA',
@@ -1117,14 +1130,47 @@ export default function App() {
                   </div>
 
                   <form onSubmit={handleUpdateAircraft} noValidate className="space-y-3 font-mono text-xs">
-                    <div>
-                      <label className="text-slate-400 block mb-1">Nome Modello & Versione</label>
-                      <input
-                        type="text"
-                        value={editFormData.name || ''}
-                        onChange={(e) => setEditFormData({...editFormData, name: e.target.value})}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
-                      />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Marche / Registrazione (Tail Number)*</label>
+                        <input
+                          type="text"
+                          required
+                          value={editFormData.tail_number || ''}
+                          onChange={(e) => setEditFormData({...editFormData, tail_number: e.target.value.toUpperCase()})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-cyan-300 font-bold focus:outline-none focus:border-cyan-500 font-mono text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Tipo ICAO (es. SF50, B738)</label>
+                        <input
+                          type="text"
+                          value={editFormData.aircraft_type || ''}
+                          onChange={(e) => setEditFormData({...editFormData, aircraft_type: e.target.value.toUpperCase()})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Nome Modello & Versione</label>
+                        <input
+                          type="text"
+                          value={editFormData.name || ''}
+                          onChange={(e) => setEditFormData({...editFormData, name: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Data di Acquisto</label>
+                        <input
+                          type="date"
+                          value={editFormData.purchase_date || ''}
+                          onChange={(e) => setEditFormData({...editFormData, purchase_date: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
+                        />
+                      </div>
                     </div>
 
                     <div>
@@ -1318,14 +1364,23 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-3">
                       <div>
                         <label className="text-slate-400 block mb-1">Anno Fabbricazione</label>
                         <input
                           type="number"
                           value={newAircraft.year_manufactured}
                           onChange={(e) => setNewAircraft({...newAircraft, year_manufactured: e.target.value})}
-                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Data di Acquisto</label>
+                        <input
+                          type="date"
+                          value={newAircraft.purchase_date}
+                          onChange={(e) => setNewAircraft({...newAircraft, purchase_date: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
                         />
                       </div>
                       <div>
@@ -1334,7 +1389,7 @@ export default function App() {
                           type="number"
                           value={newAircraft.purchase_price_eur}
                           onChange={(e) => setNewAircraft({...newAircraft, purchase_price_eur: e.target.value})}
-                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
                         />
                       </div>
                     </div>

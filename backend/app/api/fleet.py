@@ -1,5 +1,6 @@
 import os
 import shutil
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -95,12 +96,15 @@ class AircraftCreate(BaseModel):
     fuel_quantity_kg: float = 450.0
     hourly_lease_rate: float = 0.0
     year_manufactured: int = 2021
+    purchase_date: Optional[str] = None
     purchase_price_eur: float = 0.0
     image_url: Optional[str] = ""
     engine_type: Optional[str] = "Standard"
     avionics_system: Optional[str] = "Standard Avionics"
 
 class AircraftUpdate(BaseModel):
+    tail_number: Optional[str] = None
+    purchase_date: Optional[str] = None
     name: Optional[str] = None
     aircraft_type: Optional[str] = None
     category: Optional[str] = None
@@ -200,7 +204,15 @@ async def create_aircraft(data: AircraftCreate, db: AsyncSession = Depends(get_d
     if existing.scalars().first():
         raise HTTPException(status_code=400, detail="Aeromobile con questa marche (Tail Number) già presente.")
         
-    from datetime import datetime, timezone, timedelta
+    purchase_dt = datetime.now(timezone.utc)
+    if data.purchase_date:
+        try:
+            if len(data.purchase_date) == 10:
+                purchase_dt = datetime.strptime(data.purchase_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            else:
+                purchase_dt = datetime.fromisoformat(data.purchase_date.replace("Z", "+00:00"))
+        except Exception:
+            pass
 
     aircraft = Aircraft(
         tail_number=data.tail_number.upper(),
@@ -213,6 +225,7 @@ async def create_aircraft(data: AircraftCreate, db: AsyncSession = Depends(get_d
         fuel_quantity_kg=data.fuel_quantity_kg,
         hourly_lease_rate=data.hourly_lease_rate,
         year_manufactured=data.year_manufactured,
+        purchase_date=purchase_dt,
         purchase_price_eur=data.purchase_price_eur,
         image_url=data.image_url or "",
         engine_type=data.engine_type or "Standard",
@@ -233,12 +246,36 @@ async def create_aircraft(data: AircraftCreate, db: AsyncSession = Depends(get_d
 
 @router.put("/{aircraft_id}")
 async def update_aircraft(aircraft_id: int, data: AircraftUpdate, db: AsyncSession = Depends(get_db)):
-    """Aggiorna i dettagli (immagine, motore, anno, prezzo) di un aeromobile"""
+    """Aggiorna i dettagli (marche, data acquisto, immagine, motore, anno, prezzo) di un aeromobile"""
     aircraft = await db.get(Aircraft, aircraft_id)
     if not aircraft:
         raise HTTPException(status_code=404, detail="Aeromobile non trovato.")
         
     update_data = data.model_dump(exclude_unset=True) if hasattr(data, "model_dump") else data.dict(exclude_unset=True)
+    
+    # Check tail_number uniqueness if changed
+    if "tail_number" in update_data and update_data["tail_number"]:
+        new_tail = update_data["tail_number"].strip().upper()
+        if new_tail != aircraft.tail_number:
+            existing = await db.execute(select(Aircraft).where(Aircraft.tail_number == new_tail, Aircraft.id != aircraft_id))
+            if existing.scalars().first():
+                raise HTTPException(status_code=400, detail=f"Un aeromobile con marche {new_tail} è già presente.")
+            update_data["tail_number"] = new_tail
+
+    # Parse purchase_date if provided
+    if "purchase_date" in update_data:
+        val = update_data["purchase_date"]
+        if val:
+            try:
+                if len(val) == 10:  # YYYY-MM-DD
+                    update_data["purchase_date"] = datetime.strptime(val, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                else:
+                    update_data["purchase_date"] = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            except Exception:
+                del update_data["purchase_date"]
+        else:
+            del update_data["purchase_date"]
+
     for key, value in update_data.items():
         if value is not None:
             setattr(aircraft, key, value)
