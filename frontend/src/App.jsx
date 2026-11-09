@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plane, Gauge, Briefcase, Wrench, BookOpen, Radio, 
   Fuel, AlertTriangle, CheckCircle, ArrowRight, RefreshCw, 
-  MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle
+  MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock
 } from 'lucide-react';
 
 export default function App() {
@@ -1290,14 +1290,76 @@ export default function App() {
         {/* TAB 6: MAINTENANCE & WORKSHOP */}
         {activeTab === 'maintenance' && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-4 glass-panel p-5 rounded-xl border border-slate-800">
               <div>
-                <h2 className="text-xl font-bold text-white">Officina e Stato Usura Componenti</h2>
-                <p className="text-xs text-slate-400 font-mono">
-                  Monitoraggio salute per <span className="text-cyan-300 font-bold">{selectedAircraft?.tail_number} ({selectedAircraft?.name})</span>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Wrench size={22} className="text-cyan-400" /> Officina e Stato Usura Componenti
+                </h2>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  Seleziona dal menu a tendina il velivolo da ispezionare e gestire.
                 </p>
               </div>
+
+              {/* Aircraft Dropdown Selector */}
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-mono text-slate-400 uppercase font-semibold">
+                  Velivolo Selezionato:
+                </label>
+                <select
+                  value={selectedAircraft?.id || ''}
+                  onChange={(e) => {
+                    const ac = fleet.find(a => a.id === parseInt(e.target.value));
+                    if (ac) setSelectedAircraft(ac);
+                  }}
+                  className="bg-slate-900 border border-cyan-500/50 text-cyan-300 font-mono font-bold text-sm px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-400 cursor-pointer shadow-lg"
+                >
+                  {fleet.map((ac) => (
+                    <option key={ac.id} value={ac.id} className="bg-slate-900 text-white">
+                      {ac.tail_number} — {ac.name} [{ac.ownership === 'OWNED' ? 'PROPRIETÀ' : 'NOLEGGIO'}] @ {ac.current_icao}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+
+            {/* Quick Aircraft Info Strip */}
+            {selectedAircraft && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-xs">
+                <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
+                  <MapPin size={15} className="text-rose-400" />
+                  <div>
+                    <div className="text-slate-400">Posizione Attuale</div>
+                    <div className="font-bold text-white text-sm">{selectedAircraft.current_icao}</div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
+                  <Clock size={15} className="text-cyan-400" />
+                  <div>
+                    <div className="text-slate-400">Ore Cellula / Motore</div>
+                    <div className="font-bold text-white text-sm">{selectedAircraft.airframe_hours.toFixed(1)} h / {selectedAircraft.engine_hours.toFixed(1)} h</div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
+                  <Fuel size={15} className="text-purple-400" />
+                  <div>
+                    <div className="text-slate-400">Carburante a Bordo</div>
+                    <div className="font-bold text-white text-sm">{selectedAircraft.fuel_quantity_kg.toFixed(0)} / {selectedAircraft.fuel_capacity_kg.toFixed(0)} kg</div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
+                  <ShieldAlert size={15} className="text-amber-400" />
+                  <div>
+                    <div className="text-slate-400">Tipo Possesso</div>
+                    <div className="font-bold text-emerald-400 text-sm">
+                      {selectedAircraft.ownership === 'OWNED' ? 'DI PROPRIETÀ' : `NOLEGGIO (${formatEuro(selectedAircraft.hourly_lease_rate)}/h)`}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Health Bars Grid */}
             {selectedAircraft && (
