@@ -17,9 +17,9 @@ class Settings(BaseModel):
     # SimBrief
     SIMBRIEF_API_URL: str = "https://www.simbrief.com/api/xml.fetcher.php"
     
-    # Economics
-    DEFAULT_FUEL_PRICE_USD_PER_KG: float = 1.65  # ~$5.00/gal Jet-A
-    AVG_LANDING_FEE_PER_TONNE_USD: float = 8.50
+    # Economics in Euro (€)
+    DEFAULT_FUEL_PRICE_EUR_PER_KG: float = 1.75  # ~€1.40/L Jet-A1 (densità 0.80 kg/L)
+    AVG_LANDING_FEE_PER_TONNE_EUR: float = 9.20  # Tassa d'atterraggio per tonnellata MTOW
     VIRTUAL_DAYS_PER_FLIGHT: int = 3  # Time advancement per flight
 
 settings = Settings()

@@ -2,21 +2,41 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plane, Gauge, Briefcase, Wrench, BookOpen, Radio, 
   Fuel, AlertTriangle, CheckCircle, ArrowRight, RefreshCw, 
-  DollarSign, MapPin, Zap, ShieldAlert, Award
+  MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('flight'); // 'flight', 'fleet', 'jobs', 'simbrief', 'maintenance', 'logbook'
+  const [activeTab, setActiveTab] = useState('flight'); // 'flight', 'fleet', 'rental', 'jobs', 'simbrief', 'maintenance', 'economics', 'logbook'
   const [systemStatus, setSystemStatus] = useState(null);
   const [fleet, setFleet] = useState([]);
+  const [rentalCatalog, setRentalCatalog] = useState([]);
   const [selectedAircraft, setSelectedAircraft] = useState(null);
   const [activeFlight, setActiveFlight] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [simbriefOfp, setSimbriefOfp] = useState(null);
   const [simbriefInput, setSimbriefInput] = useState('');
+  const [financialGuide, setFinancialGuide] = useState(null);
   const [flightHistory, setFlightHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
+
+  // Modal State for adding custom owned aircraft
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newAircraft, setNewAircraft] = useState({
+    tail_number: '',
+    name: '',
+    aircraft_type: '',
+    category: 'GA',
+    current_icao: 'LIRN',
+    fuel_capacity_kg: 900,
+    fuel_quantity_kg: 450
+  });
+
+  // Modal State for renting
+  const [showRentModal, setShowRentModal] = useState(false);
+  const [selectedRentalTemplate, setSelectedRentalTemplate] = useState(null);
+  const [rentPickupIcao, setRentPickupIcao] = useState('LIRN');
+  const [rentCustomTail, setRentCustomTail] = useState('');
 
   // Live telemetry from WebSocket
   const [liveTelemetry, setLiveTelemetry] = useState({
@@ -38,7 +58,12 @@ export default function App() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // 1. Initial Load & Periodic Refresh
+  const formatEuro = (val) => {
+    if (val === undefined || val === null || isNaN(val)) return '€ 0,00';
+    return '€ ' + Number(val).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // 1. Initial Load & Fetchers
   const fetchStatus = async () => {
     try {
       const res = await fetch('/api/system/status');
@@ -63,6 +88,30 @@ export default function App() {
         if (data.length > 0 && !selectedAircraft) {
           setSelectedAircraft(data[0]);
         }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchRentalCatalog = async () => {
+    try {
+      const res = await fetch('/api/fleet/rentals/catalog');
+      if (res.ok) {
+        const data = await res.json();
+        setRentalCatalog(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchFinancialGuide = async () => {
+    try {
+      const res = await fetch('/api/system/financial_guide');
+      if (res.ok) {
+        const data = await res.json();
+        setFinancialGuide(data);
       }
     } catch (e) {
       console.error(e);
@@ -109,6 +158,8 @@ export default function App() {
   useEffect(() => {
     fetchStatus();
     fetchFleet();
+    fetchRentalCatalog();
+    fetchFinancialGuide();
     fetchActiveFlight();
     fetchHistory();
   }, []);
@@ -148,7 +199,109 @@ export default function App() {
     };
   }, []);
 
-  // Action handlers
+  // Action: Add Owned Aircraft
+  const handleAddAircraft = async (e) => {
+    e.preventDefault();
+    if (!newAircraft.tail_number || !newAircraft.name) {
+      showNotice('Inserisci almeno Marche e Nome Modello', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/fleet/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tail_number: newAircraft.tail_number.toUpperCase().trim(),
+          name: newAircraft.name.trim(),
+          aircraft_type: (newAircraft.aircraft_type || newAircraft.tail_number).toUpperCase().trim(),
+          category: newAircraft.category,
+          ownership: 'OWNED',
+          current_icao: (newAircraft.current_icao || 'LIRN').toUpperCase().trim(),
+          fuel_capacity_kg: parseFloat(newAircraft.fuel_capacity_kg) || 900,
+          fuel_quantity_kg: parseFloat(newAircraft.fuel_quantity_kg) || 450,
+          hourly_lease_rate: 0.0
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(`Aeromobile ${data.tail_number} aggiunto con successo al tuo hangar!`, 'success');
+        setShowAddModal(false);
+        setNewAircraft({
+          tail_number: '',
+          name: '',
+          aircraft_type: '',
+          category: 'GA',
+          current_icao: 'LIRN',
+          fuel_capacity_kg: 900,
+          fuel_quantity_kg: 450
+        });
+        fetchFleet();
+      } else {
+        showNotice(data.detail, 'error');
+      }
+    } catch (e) {
+      showNotice('Errore durante il salvataggio dell aeromobile', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Action: Rent Aircraft
+  const handleRentAircraft = async () => {
+    if (!selectedRentalTemplate) return;
+    setLoading(true);
+    try {
+      const tail = rentCustomTail.trim() || `I-RNT${Math.floor(10 + Math.random() * 89)}`;
+      const res = await fetch('/api/fleet/rent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template_id: selectedRentalTemplate.id,
+          tail_number: tail,
+          pickup_icao: rentPickupIcao.toUpperCase().trim() || 'LIRN'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        setShowRentModal(false);
+        fetchFleet();
+        setActiveTab('fleet');
+      } else {
+        showNotice(data.detail, 'error');
+      }
+    } catch (e) {
+      showNotice('Errore durante la stipula del noleggio', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Action: Delete / Return Aircraft
+  const handleDeleteAircraft = async (aircraft) => {
+    const isLeased = aircraft.ownership === 'LEASED';
+    const actionText = isLeased ? 'restituire questo aereo a noleggio' : 'rimuovere questo aereo dall hangar';
+    if (!confirm(`Sei sicuro di voler ${actionText} (${aircraft.tail_number})?`)) return;
+
+    try {
+      const res = await fetch(`/api/fleet/${aircraft.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        if (selectedAircraft?.id === aircraft.id) {
+          setSelectedAircraft(null);
+        }
+        fetchFleet();
+      } else {
+        showNotice(data.detail, 'error');
+      }
+    } catch (e) {
+      showNotice('Errore durante la rimozione', 'error');
+    }
+  };
+
+  // Job generation & Acceptance
   const handleGenerateJobs = async () => {
     if (!selectedAircraft) return;
     setLoading(true);
@@ -194,6 +347,7 @@ export default function App() {
     }
   };
 
+  // SimBrief
   const handleFetchSimbrief = async () => {
     if (!simbriefInput) {
       showNotice('Inserisci il tuo username o Pilot ID SimBrief', 'error');
@@ -205,7 +359,7 @@ export default function App() {
       if (res.ok) {
         const ofp = await res.json();
         setSimbriefOfp(ofp);
-        showNotice(`Piano ${ofp.flight_number} scaricato: ${ofp.origin_icao} -> ${ofp.destination_icao}`, 'success');
+        showNotice(`Piano ${ofp.flight_number} scaricato: ${ofp.origin_icao} → ${ofp.destination_icao}`, 'success');
       } else {
         const err = await res.json();
         showNotice(err.detail || 'Piano SimBrief non trovato', 'error');
@@ -245,6 +399,7 @@ export default function App() {
     }
   };
 
+  // Flight lifecycle
   const handleStartFlight = async (jobId = null) => {
     if (!selectedAircraft) return;
     try {
@@ -274,7 +429,7 @@ export default function App() {
       const res = await fetch('/api/flights/finalize', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
-        showNotice(`Volo chiuso! Profitto netto: $${data.summary.financials.net_profit}`, 'success');
+        showNotice(`Volo completato! Utile netto: ${formatEuro(data.summary.financials.net_profit)}`, 'success');
         fetchStatus();
         fetchFleet();
         fetchActiveFlight();
@@ -367,14 +522,14 @@ export default function App() {
             </div>
           </div>
 
-          {/* Quick Metrics Bar */}
+          {/* Quick Metrics Bar in € EURO */}
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
-              <DollarSign size={16} className="text-emerald-400" />
+              <span className="text-emerald-400 font-bold text-base">€</span>
               <div>
-                <div className="text-[10px] text-slate-400 uppercase font-mono">Capitale</div>
+                <div className="text-[10px] text-slate-400 uppercase font-mono">Capitale Aziendale</div>
                 <div className="text-sm font-bold font-mono text-emerald-400">
-                  ${systemStatus?.company?.cash_balance ? systemStatus.company.cash_balance.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '175,000.00'}
+                  {formatEuro(systemStatus?.company?.cash_balance ?? 175000)}
                 </div>
               </div>
             </div>
@@ -405,10 +560,12 @@ export default function App() {
         <div className="max-w-7xl mx-auto flex gap-1 mt-3 overflow-x-auto border-t border-slate-800/60 pt-2 text-sm">
           {[
             { id: 'flight', label: 'Volo Attivo & HUD', icon: Gauge },
-            { id: 'fleet', label: 'Hangar & Flotta', icon: Plane },
+            { id: 'fleet', label: 'Hangar (Proprietà)', icon: Plane },
+            { id: 'rental', label: 'Mercato Noleggio', icon: Key },
             { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
             { id: 'simbrief', label: 'SimBrief Dispatch', icon: Radio },
             { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
+            { id: 'economics', label: 'Legenda Costi & Ricavi', icon: HelpCircle },
             { id: 'logbook', label: 'Registro Voli', icon: BookOpen },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -417,13 +574,13 @@ export default function App() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
                   active 
                     ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm' 
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
                 }`}
               >
-                <Icon size={16} />
+                <Icon size={15} />
                 {tab.label}
               </button>
             );
@@ -552,18 +709,142 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: HANGAR & FLEET */}
+        {/* TAB 2: HANGAR & OWNED FLEET */}
         {activeTab === 'fleet' && (
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-xl font-bold text-white">Hangar & Flotta Aziendale</h2>
-                <p className="text-xs text-slate-400 font-mono">Gestisci gli aeromobili di proprietà, lo stazionamento persistente e il carburante residuo.</p>
+                <h2 className="text-xl font-bold text-white">Hangar Personale (Aerei di Proprietà)</h2>
+                <p className="text-xs text-slate-400 font-mono">
+                  Inserisci i tuoi aerei personalizzati, gestisci il parcheggio e rifornisci i serbatoi prima del volo.
+                </p>
               </div>
+
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold font-mono text-xs px-4 py-2 rounded-lg shadow transition"
+              >
+                <Plus size={16} /> Aggiungi Aeromobile di Proprietà
+              </button>
             </div>
 
+            {/* Add Aircraft Modal */}
+            {showAddModal && (
+              <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-lg w-full space-y-4">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Plus size={18} className="text-cyan-400" /> Aggiungi Aeromobile all Hangar
+                    </h3>
+                    <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">✕</button>
+                  </div>
+
+                  <form onSubmit={handleAddAircraft} className="space-y-3 font-mono text-xs">
+                    <div>
+                      <label className="text-slate-400 block mb-1">Marche / Registrazione (Tail Number)*</label>
+                      <input
+                        type="text"
+                        placeholder="es. I-SF50, N172SP, I-ALPA"
+                        required
+                        value={newAircraft.tail_number}
+                        onChange={(e) => setNewAircraft({...newAircraft, tail_number: e.target.value.toUpperCase()})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Nome Modello & Versione*</label>
+                      <input
+                        type="text"
+                        placeholder="es. Cirrus Vision SF50 G2, Phenom 300, Cessna 172"
+                        required
+                        value={newAircraft.name}
+                        onChange={(e) => setNewAircraft({...newAircraft, name: e.target.value})}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Tipo ICAO (es. SF50, B738, C172)</label>
+                        <input
+                          type="text"
+                          placeholder="es. SF50"
+                          value={newAircraft.aircraft_type}
+                          onChange={(e) => setNewAircraft({...newAircraft, aircraft_type: e.target.value.toUpperCase()})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Categoria Operativa</label>
+                        <select
+                          value={newAircraft.category}
+                          onChange={(e) => setNewAircraft({...newAircraft, category: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        >
+                          <option value="GA">GA (General Aviation)</option>
+                          <option value="BIZJET">BIZJET (Business Jet)</option>
+                          <option value="AIRLINER">AIRLINER (Linea Commerciale)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Aeroporto ICAO</label>
+                        <input
+                          type="text"
+                          placeholder="es. LIRN"
+                          required
+                          value={newAircraft.current_icao}
+                          onChange={(e) => setNewAircraft({...newAircraft, current_icao: e.target.value.toUpperCase()})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Capacità Fuel (kg)</label>
+                        <input
+                          type="number"
+                          value={newAircraft.fuel_capacity_kg}
+                          onChange={(e) => setNewAircraft({...newAircraft, fuel_capacity_kg: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Fuel Iniziale (kg)</label>
+                        <input
+                          type="number"
+                          value={newAircraft.fuel_quantity_kg}
+                          onChange={(e) => setNewAircraft({...newAircraft, fuel_quantity_kg: e.target.value})}
+                          className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddModal(false)}
+                        className="px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                      >
+                        Annulla
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
+                      >
+                        Salva nell Hangar
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Fleet Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {fleet.map((ac) => {
+              {fleet.filter(ac => ac.ownership === 'OWNED').map((ac) => {
                 const isSelected = selectedAircraft?.id === ac.id;
                 return (
                   <div 
@@ -579,10 +860,8 @@ export default function App() {
                           <span className="text-xs px-2 py-0.5 rounded font-mono bg-slate-800 text-slate-300">
                             {ac.category}
                           </span>
-                          <span className={`text-xs px-2 py-0.5 rounded font-mono ${
-                            ac.ownership === 'OWNED' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'
-                          }`}>
-                            {ac.ownership}
+                          <span className="text-xs px-2 py-0.5 rounded font-mono bg-emerald-500/20 text-emerald-300">
+                            DI PROPRIETÀ
                           </span>
                         </div>
                         <h3 className="text-sm font-semibold text-white mt-1">{ac.name}</h3>
@@ -591,14 +870,23 @@ export default function App() {
                         </p>
                       </div>
 
-                      <button
-                        onClick={() => setSelectedAircraft(ac)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold font-mono ${
-                          isSelected ? 'bg-cyan-500 text-black' : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                        }`}
-                      >
-                        {isSelected ? 'AEREO ATTIVO' : 'SELEZIONA'}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setSelectedAircraft(ac)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold font-mono ${
+                            isSelected ? 'bg-cyan-500 text-black' : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                          }`}
+                        >
+                          {isSelected ? 'AEREO ATTIVO' : 'SELEZIONA'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAircraft(ac)}
+                          title="Elimina dall hangar"
+                          className="p-1.5 rounded bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 transition"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Fuel & Hours Progress */}
@@ -656,11 +944,182 @@ export default function App() {
                   </div>
                 );
               })}
+
+              {fleet.filter(ac => ac.ownership === 'OWNED').length === 0 && (
+                <div className="col-span-2 text-center py-12 glass-panel rounded-xl border border-dashed border-slate-800">
+                  <p className="text-slate-400 font-mono text-sm">Non hai ancora inserito nessun aereo di proprietà nel tuo hangar.</p>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="mt-3 text-cyan-400 hover:underline font-mono text-xs flex items-center gap-1 mx-auto"
+                  >
+                    <Plus size={14} /> Clicca qui per aggiungere il tuo primo aereo di proprietà
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* TAB 3: JOBS & CONTRACTS */}
+        {/* TAB 3: RENTAL MARKET (NOLEGGIO) */}
+        {activeTab === 'rental' && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white">Mercato del Noleggio & Charter (Lease Market)</h2>
+                <p className="text-xs text-slate-400 font-mono">
+                  Hai voglia di volare con un aereo diverso senza doverlo acquistare? Noleggialo on-demand pagando solo le ore di volo effettive.
+                </p>
+              </div>
+            </div>
+
+            {/* Currently Rented Aircraft in Fleet */}
+            {fleet.filter(ac => ac.ownership === 'LEASED').length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold text-amber-300 font-mono uppercase">I Tuoi Noleggi Attivi</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {fleet.filter(ac => ac.ownership === 'LEASED').map((ac) => {
+                    const isSelected = selectedAircraft?.id === ac.id;
+                    return (
+                      <div key={ac.id} className={`glass-panel p-4 rounded-xl border ${isSelected ? 'border-amber-500 ring-1 ring-amber-500' : 'border-amber-900/40 bg-amber-950/10'}`}>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-base font-black font-mono text-amber-400">{ac.tail_number}</span>
+                              <span className="text-xs px-2 py-0.5 rounded font-mono bg-amber-500/20 text-amber-300">
+                                {formatEuro(ac.hourly_lease_rate)} / ora
+                              </span>
+                            </div>
+                            <h4 className="text-sm font-bold text-white mt-0.5">{ac.name}</h4>
+                            <p className="text-xs text-slate-400 font-mono">Stazionato a: <span className="text-white font-bold">{ac.current_icao}</span></p>
+                          </div>
+                          
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setSelectedAircraft(ac)}
+                              className={`px-3 py-1.5 rounded text-xs font-mono font-bold ${isSelected ? 'bg-amber-400 text-black' : 'bg-slate-800 text-slate-200'}`}
+                            >
+                              {isSelected ? 'IN USO' : 'SELEZIONA'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteAircraft(ac)}
+                              className="px-2.5 py-1.5 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-mono"
+                              title="Restituisci noleggio"
+                            >
+                              Riconsegna
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Rental Catalog */}
+            <h3 className="text-sm font-bold text-slate-300 font-mono uppercase mt-6">Catalogo Flotta a Noleggio Disponibile</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {rentalCatalog.map((item) => (
+                <div key={item.id} className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-col justify-between hover:border-cyan-500/40 transition">
+                  <div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-cyan-300">
+                        {item.category}
+                      </span>
+                      <div className="text-right">
+                        <div className="text-base font-bold font-mono text-emerald-400">{formatEuro(item.hourly_rate_eur)}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">all ora di volo</div>
+                      </div>
+                    </div>
+
+                    <h4 className="text-base font-bold text-white mt-2">{item.name}</h4>
+                    <p className="text-xs text-slate-400 font-mono mt-2 leading-relaxed">{item.description}</p>
+
+                    <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/80 font-mono text-xs text-slate-400">
+                      <div>Velocità Crociera: <span className="text-white">{item.cruising_speed_kts} kts</span></div>
+                      <div>Autonomia: <span className="text-white">{item.range_nm} NM</span></div>
+                      <div className="col-span-2">Serbatoio Max: <span className="text-purple-300">{item.fuel_capacity_kg} kg</span></div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setSelectedRentalTemplate(item);
+                      setRentCustomTail(`I-RNT${Math.floor(10 + Math.random() * 89)}`);
+                      setRentPickupIcao(selectedAircraft?.current_icao || 'LIRN');
+                      setShowRentModal(true);
+                    }}
+                    className="mt-5 w-full bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs py-2 rounded-lg transition flex items-center justify-center gap-2"
+                  >
+                    <Key size={14} /> Noleggia per questo Volo
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Rent Confirmation Modal */}
+            {showRentModal && selectedRentalTemplate && (
+              <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-md w-full space-y-4">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Key size={18} className="text-cyan-400" /> Noleggia {selectedRentalTemplate.name}
+                    </h3>
+                    <button onClick={() => setShowRentModal(false)} className="text-slate-400 hover:text-white">✕</button>
+                  </div>
+
+                  <div className="space-y-3 font-mono text-xs">
+                    <div className="bg-slate-900/80 p-3 rounded border border-slate-800">
+                      <div className="text-slate-400">Tariffa Noleggio Orario (Dry Lease):</div>
+                      <div className="text-lg font-bold text-emerald-400">{formatEuro(selectedRentalTemplate.hourly_rate_eur)} / ora di volo</div>
+                      <div className="text-[10px] text-slate-500 mt-1">L importo verrà addebitato proporzionalmente alla durata effettiva dei voli effettuati.</div>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Marche Personalizzate (facoltativo)</label>
+                      <input
+                        type="text"
+                        value={rentCustomTail}
+                        onChange={(e) => setRentCustomTail(e.target.value.toUpperCase())}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 block mb-1">Aeroporto di Ritiro (ICAO)</label>
+                      <input
+                        type="text"
+                        value={rentPickupIcao}
+                        onChange={(e) => setRentPickupIcao(e.target.value.toUpperCase())}
+                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setShowRentModal(false)}
+                        className="px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
+                      >
+                        Annulla
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRentAircraft}
+                        disabled={loading}
+                        className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
+                      >
+                        Conferma Noleggio
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: JOBS & CONTRACTS */}
         {activeTab === 'jobs' && (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -713,7 +1172,7 @@ export default function App() {
                   <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
                     <div>
                       <div className="text-[10px] font-mono text-slate-400 uppercase">Ricavo Netto</div>
-                      <div className="text-base font-bold font-mono text-emerald-400">${job.reward_usd.toLocaleString('en-US')}</div>
+                      <div className="text-base font-bold font-mono text-emerald-400">{formatEuro(job.reward_usd)}</div>
                     </div>
 
                     <button
@@ -741,7 +1200,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: SIMBRIEF DISPATCH */}
+        {/* TAB 5: SIMBRIEF DISPATCH */}
         {activeTab === 'simbrief' && (
           <div className="space-y-6">
             <div className="glass-panel p-6 rounded-xl border border-slate-800">
@@ -828,7 +1287,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: MAINTENANCE & WORKSHOP */}
+        {/* TAB 6: MAINTENANCE & WORKSHOP */}
         {activeTab === 'maintenance' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -880,18 +1339,18 @@ export default function App() {
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[
-                  { code: 'OIL_AND_FILTER', name: 'Cambio Olio e Filtri (50h)', cost: 450, desc: 'Ispezione e lubrificazione base motore' },
-                  { code: 'INSPECTION_100H', name: 'Ispezione 100 Ore', cost: 2400, desc: 'Tagliando motore, compressione e candele' },
-                  { code: 'TIRES_REPLACE', name: 'Sostituzione Pneumatici', cost: 1200, desc: 'Gomme nuove per carrello principale e anteriore' },
-                  { code: 'BRAKES_OVERHAUL', name: 'Revisione Dischi & Pastiglie', cost: 1800, desc: 'Pastiglie nuove e spurgo idraulico' },
-                  { code: 'ANNUAL_INSPECTION', name: 'Ispezione Annuale Certificata', cost: 4800, desc: 'Revisione cellula, cavi comandi e avionica' },
-                  { code: 'ENGINE_OVERHAUL', name: 'Revisione Generale Motore (TBO)', cost: 38000, desc: 'Ricostruzione a ore zero motore' },
+                  { code: 'OIL_AND_FILTER', name: 'Cambio Olio e Filtri (50h)', cost: 420, desc: 'Ispezione e lubrificazione base motore certificata' },
+                  { code: 'INSPECTION_100H', name: 'Ispezione 100 Ore', cost: 2200, desc: 'Tagliando motore, compressione e candele' },
+                  { code: 'TIRES_REPLACE', name: 'Sostituzione Pneumatici', cost: 1100, desc: 'Gomme nuove per carrello principale e anteriore' },
+                  { code: 'BRAKES_OVERHAUL', name: 'Revisione Dischi & Pastiglie', cost: 1650, desc: 'Pastiglie nuove e spurgo idraulico' },
+                  { code: 'ANNUAL_INSPECTION', name: 'Ispezione Annuale Certificata EASA', cost: 4400, desc: 'Revisione cellula, cavi comandi e avionica' },
+                  { code: 'ENGINE_OVERHAUL', name: 'Revisione Generale Motore (TBO)', cost: 35000, desc: 'Ricostruzione a ore zero motore' },
                 ].map((srv) => (
                   <div key={srv.code} className="bg-slate-900/60 p-4 rounded-lg border border-slate-800 flex flex-col justify-between">
                     <div>
                       <div className="flex justify-between items-start">
                         <h4 className="font-bold text-sm text-white">{srv.name}</h4>
-                        <span className="font-mono font-bold text-emerald-400 text-sm">${srv.cost.toLocaleString('en-US')}</span>
+                        <span className="font-mono font-bold text-emerald-400 text-sm">{formatEuro(srv.cost)}</span>
                       </div>
                       <p className="text-xs text-slate-400 font-mono mt-1">{srv.desc}</p>
                     </div>
@@ -947,7 +1406,107 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 6: LOGBOOK */}
+        {/* TAB 7: FINANCIAL GUIDE & RULES (LEGENDA COSTI E RICAVI) */}
+        {activeTab === 'economics' && financialGuide && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Info size={22} className="text-cyan-400" /> Legenda Economica & Modello Operativo
+              </h2>
+              <p className="text-xs text-slate-400 font-mono mt-1">
+                Trasparenza totale: ecco esattamente come vengono calcolati i ricavi, i consumi, le tasse aeroportuali e l usura nella simulazione.
+              </p>
+            </div>
+
+            {/* 1. Fuel Rules */}
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-2">
+              <div className="flex items-center gap-2 text-purple-400 font-bold text-sm font-mono">
+                <Fuel size={16} /> 1. CARBURANTE (JET-A1 KEROSENE)
+              </div>
+              <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                <div className="font-bold text-white mb-1">{financialGuide.fuel_rules.formula}</div>
+                <p className="text-slate-400">{financialGuide.fuel_rules.notes}</p>
+                <div className="mt-2 grid grid-cols-2 max-w-sm gap-2 bg-slate-900/60 p-2.5 rounded border border-slate-800">
+                  <div>Prezzo Jet-A1 al Kg: <span className="text-purple-300 font-bold">{formatEuro(financialGuide.fuel_rules.price_per_kg_eur)}/kg</span></div>
+                  <div>Equivalente al Litro: <span className="text-slate-300 font-bold">{formatEuro(financialGuide.fuel_rules.price_per_litre_approx_eur)}/L</span></div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Landing Fees */}
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm font-mono">
+                <MapPin size={16} /> 2. TASSE D ATTERRAGGIO (LANDING & HANDLING FEES)
+              </div>
+              <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                <div className="font-bold text-white mb-2">{financialGuide.landing_fee_rules.formula}</div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {financialGuide.landing_fee_rules.categories.map((cat, idx) => (
+                    <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                      <div className="font-bold text-cyan-300">{cat.category}</div>
+                      <div className="text-slate-400 mt-1">Quota Base: <span className="text-white">{cat.base}</span></div>
+                      <div className="text-slate-400">Quota Peso: <span className="text-white">{cat.per_tonne}</span></div>
+                      <div className="text-[11px] text-emerald-400 mt-2 font-semibold">{cat.typical_cost}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Revenue Rules */}
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+              <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm font-mono">
+                <Briefcase size={16} /> 3. CALCOLO RICAVI DEI VOLI (JOB REWARDS)
+              </div>
+              <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                <div className="font-bold text-white mb-2">{financialGuide.revenue_rules.formula}</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {financialGuide.revenue_rules.breakdown.map((item, idx) => (
+                    <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                      <div className="font-bold text-slate-200">{item.component}</div>
+                      <div className="text-slate-400 mt-0.5">{item.description}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Touchdown & Wear Table */}
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm font-mono">
+                <Wrench size={16} /> 4. MECCANICA USURA E ATTERRAGGI (TOUCHDOWN DYNAMICS)
+              </div>
+              <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                <p className="text-slate-400 mb-3">
+                  Ogni componente si usura in proporzione al tempo di volo, ma lo stress maggiore si concentra all atterraggio e nelle manovre brusche:
+                </p>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border border-slate-800 rounded">
+                    <thead className="bg-slate-900 text-slate-400">
+                      <tr>
+                        <th className="p-2.5">Giudizio Contatto</th>
+                        <th className="p-2.5">Soglie Telemetriche</th>
+                        <th className="p-2.5">Impatto su Gomme e Carrello</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {financialGuide.wear_and_maintenance_rules.touchdown_impact_table.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-800/30">
+                          <td className="p-2.5 font-bold text-white">{row.rating}</td>
+                          <td className="p-2.5 text-cyan-300">{row.fpm}</td>
+                          <td className="p-2.5 text-slate-300">{row.impact}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 8: LOGBOOK */}
         {activeTab === 'logbook' && (
           <div className="space-y-6">
             <h2 className="text-xl font-bold text-white">Registro Storico Voli</h2>
@@ -985,7 +1544,7 @@ export default function App() {
                       </td>
                       <td className="p-3">{log.touchdown_g ? `${log.touchdown_g} G` : `${log.max_g_force} G`}</td>
                       <td className={`p-3 text-right font-bold ${log.net_profit_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        ${log.net_profit_usd.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        {formatEuro(log.net_profit_usd)}
                       </td>
                     </tr>
                   ))}

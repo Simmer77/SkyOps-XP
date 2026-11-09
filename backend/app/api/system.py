@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.models.schema import Company
 from app.services.xp_connector import xp_connector
 from app.services.maintenance import MaintenanceService
+from app.services.economy import EconomyService
 from app.services.flight_tracker import flight_tracker
 
 router = APIRouter(prefix="/system", tags=["System"])
@@ -36,6 +37,11 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
         },
         "services_catalog": MaintenanceService.get_service_costs()
     }
+
+@router.get("/financial_guide")
+async def get_financial_guide():
+    """Restituisce le regole economiche, formule, tariffe e costi di riferimento"""
+    return EconomyService.get_financial_guide()
 
 @router.post("/inject_failure")
 async def inject_failure(req: FailureInjectRequest):

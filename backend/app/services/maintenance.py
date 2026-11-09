@@ -116,43 +116,49 @@ class MaintenanceService:
 
     @staticmethod
     def get_service_costs() -> Dict[str, Dict[str, Any]]:
-        """Returns standard maintenance service catalog"""
+        """Restituisce il catalogo costi manutenzione in Euro (€)"""
         return {
             "OIL_AND_FILTER": {
                 "name": "Cambio Olio e Filtri (50h)",
-                "cost_usd": 450.0,
+                "cost_eur": 420.0,
+                "cost_usd": 420.0,
                 "engine_health_gain": 8.0,
-                "notes": "Ispezione e lubrificazione base motore"
+                "notes": "Ispezione e lubrificazione base motore certificata"
             },
             "INSPECTION_100H": {
                 "name": "Ispezione Completa 100 Ore",
-                "cost_usd": 2400.0,
+                "cost_eur": 2200.0,
+                "cost_usd": 2200.0,
                 "engine_health_gain": 20.0,
                 "avionics_health_gain": 15.0,
                 "notes": "Tagliando programmato con controllo compressione e candele"
             },
             "TIRES_REPLACE": {
                 "name": "Sostituzione Pneumatici Carrello",
-                "cost_usd": 1200.0,
+                "cost_eur": 1100.0,
+                "cost_usd": 1100.0,
                 "tires_health_gain": 100.0,
                 "notes": "Gomme nuove per carrello principale e anteriore"
             },
             "BRAKES_OVERHAUL": {
                 "name": "Revisione Dischi e Pastiglie Freni",
-                "cost_usd": 1800.0,
+                "cost_eur": 1650.0,
+                "cost_usd": 1650.0,
                 "brakes_health_gain": 100.0,
                 "notes": "Sostituzione pastiglie e spurgo impianto idraulico"
             },
             "ANNUAL_INSPECTION": {
-                "name": "Ispezione Annuale Strutturale FAA/EASA",
-                "cost_usd": 4800.0,
+                "name": "Ispezione Annuale Strutturale EASA/ENAC",
+                "cost_eur": 4400.0,
+                "cost_usd": 4400.0,
                 "airframe_health_gain": 25.0,
                 "avionics_health_gain": 25.0,
                 "notes": "Revisione certificata dell'intera cellula e comandi di volo"
             },
             "ENGINE_OVERHAUL": {
                 "name": "Revisione Generale Motore (TBO)",
-                "cost_usd": 38000.0,
+                "cost_eur": 35000.0,
+                "cost_usd": 35000.0,
                 "engine_health_gain": 100.0,
                 "notes": "Rigenerazione a ore zero del motore"
             }
