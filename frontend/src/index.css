@@ -7,15 +7,56 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   background-color: #0b0f17;
   color: #e2e8f0;
+  font-size: 16px;
 }
 
 /* Glass panel effect */
 .glass-panel {
-  background: rgba(17, 24, 39, 0.75);
+  background: rgba(17, 24, 39, 0.78);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(31, 41, 61, 0.8);
+  border: 1px solid rgba(31, 41, 61, 0.85);
 }
 
 .hud-font {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Comfortable readability boost across UI (excluding live flight HUD gauges) */
+.readable-ui .text-\[10px\] {
+  font-size: 0.78rem !important;
+  line-height: 1.15rem !important;
+}
+.readable-ui .text-\[11px\] {
+  font-size: 0.85rem !important;
+  line-height: 1.25rem !important;
+}
+.readable-ui .text-xs {
+  font-size: 0.92rem !important;
+  line-height: 1.35rem !important;
+}
+.readable-ui .text-sm {
+  font-size: 1.02rem !important;
+  line-height: 1.48rem !important;
+}
+.readable-ui .text-base {
+  font-size: 1.12rem !important;
+  line-height: 1.65rem !important;
+}
+.readable-ui .text-lg {
+  font-size: 1.28rem !important;
+  line-height: 1.8rem !important;
+}
+.readable-ui .text-xl {
+  font-size: 1.45rem !important;
+  line-height: 1.95rem !important;
+}
+
+/* Preserve exact flight data gauge sizing on HUD */
+.readable-ui .hud-gauges .text-xs {
+  font-size: 0.75rem !important;
+  line-height: 1rem !important;
+}
+.readable-ui .hud-gauges .text-sm {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
 }

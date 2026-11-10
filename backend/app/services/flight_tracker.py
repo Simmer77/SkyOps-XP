@@ -279,6 +279,14 @@ class FlightTracker:
             # Reset tracker state
             result = {
                 "flight_log_id": log.id,
+                "flight_number": log.flight_number,
+                "tail_number": aircraft.tail_number,
+                "aircraft_name": aircraft.name,
+                "origin_icao": orig_icao,
+                "destination_icao": final_dest,
+                "duration_min": log.flight_duration_min,
+                "fuel_used_kg": log.fuel_used_kg,
+                "notes": diversion_note,
                 "financials": financials,
                 "wear": wear,
                 "touchdown": {

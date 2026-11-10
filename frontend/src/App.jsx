@@ -86,6 +86,7 @@ export default function App() {
   const [showDiversionPanel, setShowDiversionPanel] = useState(false);
   const [actualArrivalIcao, setActualArrivalIcao] = useState('');
   const [diversionReason, setDiversionReason] = useState('');
+  const [lastFlightSummary, setLastFlightSummary] = useState(null);
 
   // Modal State for legacy renting
   const [showRentModal, setShowRentModal] = useState(false);
@@ -873,6 +874,7 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
+        setLastFlightSummary(null);
         showNotice(data.message || `Volo avviato per ${selectedAircraft.tail_number}!`, 'success');
         fetchActiveFlight();
       } else {
@@ -899,6 +901,7 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
+        setLastFlightSummary(data.summary);
         showNotice(`Volo completato! Utile netto: ${formatEuro(data.summary.financials.net_profit)}`, 'success');
         setShowDiversionPanel(false);
         setActualArrivalIcao('');
@@ -974,7 +977,7 @@ export default function App() {
     ];
 
     return (
-      <div className="min-h-screen bg-aviation-dark flex items-center justify-center p-6 font-sans relative overflow-hidden">
+      <div className="min-h-screen bg-aviation-dark flex items-center justify-center p-6 font-sans relative overflow-hidden readable-ui">
         {/* Toast Notification */}
         {notification && (
           <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-xl text-sm font-medium border flex items-center gap-2 ${
@@ -1105,7 +1108,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-aviation-dark flex flex-col font-sans">
+    <div className="min-h-screen bg-aviation-dark flex flex-col font-sans readable-ui">
       {/* Toast Notification */}
       {notification && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-xl text-sm font-medium border flex items-center gap-2 transition-all ${
@@ -1122,7 +1125,7 @@ export default function App() {
 
       {/* Top Glass Cockpit Header */}
       <header className="glass-panel border-b border-slate-800/80 px-6 py-3 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+        <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-cyan-500/10 border border-cyan-500/30 rounded-lg text-cyan-400">
               <Plane size={24} className="rotate-45" />
@@ -1139,7 +1142,7 @@ export default function App() {
           </div>
 
           {/* Quick Metrics Bar in € EURO */}
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
               <span className="text-emerald-400 font-bold text-base">€</span>
               <div>
@@ -1203,48 +1206,67 @@ export default function App() {
             {/* Reset Profile Button */}
             <button
               onClick={handleResetProfile}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/80 border border-rose-800/60 text-rose-300 text-xs font-mono transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/80 border border-rose-800/60 text-rose-300 text-xs font-mono transition"
               title="Cancella profilo aziendale e ricomincia da zero"
             >
-              <Trash2 size={13} /> Reset Profilo
+              <Trash2 size={14} /> Reset Profilo
             </button>
           </div>
         </div>
-
-        {/* Tab Navigation */}
-        <div className="max-w-7xl mx-auto flex gap-1 mt-3 overflow-x-auto border-t border-slate-800/60 pt-2 text-sm">
-          {[
-            { id: 'flight', label: 'Volo Attivo & HUD', icon: Gauge },
-            { id: 'fleet', label: 'Hangar (Proprietà)', icon: Plane },
-            { id: 'rental', label: 'Mercato & Noleggio', icon: Key },
-            { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
-            { id: 'simbrief', label: 'Piano di Volo & Dispatch', icon: Radio },
-            { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
-            { id: 'finances', label: 'Bilancio & Finanze', icon: TrendingUp },
-            { id: 'logbook', label: 'Registro Voli', icon: BookOpen },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap ${
-                  active 
-                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm' 
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                <Icon size={15} />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6">
+      {/* Main Layout with Left Sidebar Navigation */}
+      <div className="flex-1 flex flex-col lg:flex-row max-w-[1600px] w-full mx-auto">
+        {/* Left Sidebar */}
+        <aside className="lg:w-72 shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800/80 bg-slate-950/60 p-4 flex flex-col justify-between gap-4">
+          <nav className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0">
+            {[
+              { id: 'flight', label: 'Volo Attivo & HUD', icon: Gauge },
+              { id: 'fleet', label: 'Hangar (Proprietà)', icon: Plane },
+              { id: 'rental', label: 'Mercato & Noleggio', icon: Key },
+              { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
+              { id: 'simbrief', label: 'Piano di Volo & Dispatch', icon: Radio },
+              { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
+              { id: 'finances', label: 'Bilancio & Finanze', icon: TrendingUp },
+              { id: 'logbook', label: 'Registro Voli', icon: BookOpen },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all whitespace-nowrap text-left border ${
+                    active 
+                      ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/50 shadow-md lg:border-l-4 lg:border-l-cyan-400 font-bold' 
+                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border-transparent'
+                  }`}
+                >
+                  <Icon size={18} className={active ? 'text-cyan-400 shrink-0' : 'text-slate-400 shrink-0'} />
+                  <span className="text-sm">{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Active Aircraft Quick Sidebar Card */}
+          {selectedAircraft && (
+            <div className="hidden lg:block glass-panel p-4 rounded-xl border border-slate-800 space-y-2 mt-4">
+              <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider">Aeromobile Selezionato</div>
+              <div className="flex items-center justify-between">
+                <span className="font-black font-mono text-cyan-300 text-base">{selectedAircraft.tail_number}</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-200">{selectedAircraft.aircraft_type}</span>
+              </div>
+              <div className="text-xs text-white font-semibold truncate" title={selectedAircraft.name}>{selectedAircraft.name}</div>
+              <div className="text-xs font-mono text-slate-400 flex items-center gap-1 pt-1 border-t border-slate-800/80">
+                <MapPin size={13} className="text-rose-400" /> Base attuale: <strong className="text-white">{selectedAircraft.current_icao}</strong>
+              </div>
+            </div>
+          )}
+        </aside>
+
+        {/* Main Content Area */}
+        <main className="flex-1 p-5 lg:p-8 min-w-0">
         
         {/* TAB 1: FLIGHT DECK & HUD */}
         {activeTab === 'flight' && (
@@ -1488,8 +1510,134 @@ export default function App() {
               })()}
             </div>
 
-            {/* Glass Cockpit Gauges Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Post-Flight Debriefing & Economic Summary Card */}
+            {lastFlightSummary && (
+              <div className="glass-panel p-6 rounded-2xl border border-emerald-500/50 bg-gradient-to-br from-slate-900/95 via-slate-900/80 to-emerald-950/25 shadow-2xl space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                      <CheckCircle size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                        Riepilogo Fine Volo & Registrazione Bilancio
+                      </h3>
+                      <p className="text-xs text-slate-300 font-mono">
+                        Volo <strong className="text-cyan-300">{lastFlightSummary.flight_number}</strong> • {lastFlightSummary.tail_number} ({lastFlightSummary.aircraft_name}) • Rotta: <strong className="text-white">{lastFlightSummary.origin_icao} ➔ {lastFlightSummary.destination_icao}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setActiveTab('finances')}
+                      className="px-3.5 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-bold text-xs transition"
+                    >
+                      Apri Bilancio & Libro Mastro
+                    </button>
+                    <button
+                      onClick={() => setLastFlightSummary(null)}
+                      className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs transition"
+                    >
+                      ✕ Chiudi
+                    </button>
+                  </div>
+                </div>
+
+                {lastFlightSummary.notes && (
+                  <div className="p-2.5 rounded-lg bg-amber-950/30 border border-amber-500/40 text-amber-300 text-xs font-mono">
+                    ⚠️ {lastFlightSummary.notes}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 font-mono text-xs">
+                  {/* Column 1: Flight Metrics & Touchdown */}
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2.5">
+                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">Dati di Volo & Atterraggio</div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Durata Volo (Block Time):</span>
+                      <span className="text-white font-bold">{lastFlightSummary.duration_min} min</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Carburante Consumato:</span>
+                      <span className="text-purple-300 font-bold">{lastFlightSummary.fuel_used_kg} kg</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Rateo Touchdown:</span>
+                      <span className="text-cyan-300 font-bold">
+                        {lastFlightSummary.touchdown?.fpm !== null && lastFlightSummary.touchdown?.fpm !== undefined ? `${lastFlightSummary.touchdown.fpm} fpm` : 'N/D'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Impatto G-Force:</span>
+                      <span className="text-amber-300 font-bold">
+                        {lastFlightSummary.touchdown?.g ? `${lastFlightSummary.touchdown.g} G` : 'N/D'} ({lastFlightSummary.touchdown?.rating || 'OK'})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Column 2: Economic Breakdown */}
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">Conto Economico del Volo</div>
+                    <div className="flex justify-between">
+                      <span className="text-emerald-400">(+) Ricavo Lordo Volo:</span>
+                      <span className="text-emerald-400 font-bold">+{formatEuro(lastFlightSummary.financials?.gross_revenue)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">(-) Carburante Jet-A1:</span>
+                      <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials?.fuel_cost)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">(-) Tassa Atterraggio:</span>
+                      <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials?.landing_fee)}</span>
+                    </div>
+                    {lastFlightSummary.financials?.lease_cost > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">(-) Canone Noleggio Orario:</span>
+                        <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.lease_cost)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t border-slate-800 pt-2 font-bold text-sm">
+                      <span className="text-white">(=) Utile Netto Volo:</span>
+                      <span className={lastFlightSummary.financials?.net_profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        {lastFlightSummary.financials?.net_profit >= 0 ? '+' : ''}{formatEuro(lastFlightSummary.financials?.net_profit)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[11px] pt-1 text-slate-400">
+                      <span>Nuovo Saldo Cassa:</span>
+                      <span className="text-emerald-300 font-bold">{formatEuro(lastFlightSummary.new_cash_balance)}</span>
+                    </div>
+                  </div>
+
+                  {/* Column 3: Component Wear Applied */}
+                  <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">Usura Applicata alle Componenti</div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Motore / Propulsori:</span>
+                      <span className="text-amber-300">-{lastFlightSummary.wear?.engine?.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Cellula & Struttura:</span>
+                      <span className="text-amber-300">-{lastFlightSummary.wear?.airframe?.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Pneumatici Carrello:</span>
+                      <span className="text-amber-300">-{lastFlightSummary.wear?.tires?.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Impianto Frenante:</span>
+                      <span className="text-amber-300">-{lastFlightSummary.wear?.brakes?.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Avionica & Sensori:</span>
+                      <span className="text-amber-300">-{lastFlightSummary.wear?.avionics?.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Glass Cockpit Gauges Grid (unchanged flight gauge sizing) */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 hud-gauges">
               <div className="glass-panel p-4 rounded-xl border border-slate-800/80">
                 <div className="text-xs text-slate-400 font-mono uppercase">Velocità Indicata (IAS)</div>
                 <div className="text-3xl font-black font-mono text-cyan-400 mt-1">
@@ -4065,7 +4213,8 @@ export default function App() {
           </div>
         )}
 
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
