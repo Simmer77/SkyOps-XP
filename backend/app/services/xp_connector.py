@@ -25,6 +25,12 @@ DATAREF_MAP = {
     15: "sim/cockpit2/engine/indicators/EGT_deg_C[0]",
 }
 
+# Aircraft identity byte-array datarefs (subscribed at 1 Hz)
+IDENTITY_DATAREF_MAP = {
+    **{100 + i: f"sim/aircraft/view/acf_ICAO[{i}]" for i in range(8)},
+    **{200 + i: f"sim/aircraft/view/acf_tailnum[{i}]" for i in range(10)},
+}
+
 ID_TO_NAME = DATAREF_MAP
 NAME_TO_ID = {v: k for k, v in DATAREF_MAP.items()}
 
@@ -61,6 +67,12 @@ class XPConnector:
             "egt_c": 0.0,
         }
         
+        # Loaded aircraft identity decoded from X-Plane 12
+        self._icao_bytes: List[int] = [0] * 8
+        self._tail_bytes: List[int] = [0] * 10
+        self.detected_icao: str = ""
+        self.detected_tailnum: str = ""
+        
         self.subscribers: List[Callable[[Dict[str, float]], Any]] = []
 
     def start(self):
@@ -85,6 +97,8 @@ class XPConnector:
                 # Cancel subscriptions by sending freq 0
                 for dref_id, dref_name in DATAREF_MAP.items():
                     self._send_rref(dref_name, dref_id, 0)
+                for dref_id, dref_name in IDENTITY_DATAREF_MAP.items():
+                    self._send_rref(dref_name, dref_id, 0)
                 self.sock.close()
             except Exception:
                 pass
@@ -92,10 +106,12 @@ class XPConnector:
         logger.info("XPConnector stopped.")
 
     def subscribe_all(self, freq_hz: int = 5):
-        """Subscribe to all necessary telemetry datarefs at freq_hz frequency"""
+        """Subscribe to all necessary telemetry and aircraft identity datarefs"""
         for dref_id, dref_name in DATAREF_MAP.items():
             self._send_rref(dref_name, dref_id, freq_hz)
-        logger.info(f"Requested {len(DATAREF_MAP)} datarefs at {freq_hz} Hz from X-Plane")
+        for dref_id, dref_name in IDENTITY_DATAREF_MAP.items():
+            self._send_rref(dref_name, dref_id, 1)
+        logger.info(f"Requested {len(DATAREF_MAP)} telemetry + {len(IDENTITY_DATAREF_MAP)} identity datarefs from X-Plane")
 
     def _send_rref(self, dref_name: str, dref_id: int, freq_hz: int):
         """Builds and sends RREF packet to X-Plane"""
@@ -176,10 +192,24 @@ class XPConnector:
         # Connection timeout check (no packets for > 4 seconds)
         if self.is_connected and (now - self.last_packet_time > 4.0):
             self.is_connected = False
+            self.detected_icao = ""
+            self.detected_tailnum = ""
+            self._icao_bytes = [0] * 8
+            self._tail_bytes = [0] * 10
             logger.info("Lost connection to X-Plane (timeout)")
 
+    @staticmethod
+    def _decode_byte_buf(buf: List[int]) -> str:
+        chars = []
+        for b in buf:
+            if b <= 0:
+                break
+            if 32 <= b <= 126:
+                chars.append(chr(b))
+        return "".join(chars).strip().upper()
+
     def _process_dataref_val(self, dref_id: int, val: float):
-        """Updates internal telemetry dictionary"""
+        """Updates internal telemetry dictionary and aircraft identity strings"""
         if dref_id == 1:
             self.telemetry["latitude"] = val
         elif dref_id == 2:
@@ -210,6 +240,12 @@ class XPConnector:
             self.telemetry["brake_right"] = val
         elif dref_id == 15:
             self.telemetry["egt_c"] = val
+        elif 100 <= dref_id < 108:
+            self._icao_bytes[dref_id - 100] = int(round(val))
+            self.detected_icao = self._decode_byte_buf(self._icao_bytes)
+        elif 200 <= dref_id < 210:
+            self._tail_bytes[dref_id - 200] = int(round(val))
+            self.detected_tailnum = self._decode_byte_buf(self._tail_bytes)
 
 # Singleton instance
 xp_connector = XPConnector()

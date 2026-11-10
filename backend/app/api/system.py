@@ -29,6 +29,8 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
         "has_profile": company is not None,
         "xp12_detected_path": detected_xp,
         "xp_connected": xp_connector.is_connected,
+        "xp_aircraft_icao": xp_connector.detected_icao,
+        "xp_aircraft_tailnum": xp_connector.detected_tailnum,
         "xp_ip": xp_connector.xp_ip,
         "xp_port": xp_connector.xp_port,
         "active_flight_phase": flight_tracker.phase,
@@ -69,6 +71,8 @@ async def websocket_telemetry(websocket: WebSocket):
         while True:
             payload = {
                 "xp_connected": xp_connector.is_connected,
+                "xp_aircraft_icao": xp_connector.detected_icao,
+                "xp_aircraft_tailnum": xp_connector.detected_tailnum,
                 "flight_phase": flight_tracker.phase,
                 "telemetry": xp_connector.telemetry,
                 "touchdown": {

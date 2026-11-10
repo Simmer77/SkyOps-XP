@@ -87,7 +87,20 @@ export default function App() {
     engine_running: 0
   });
   const [xpConnected, setXpConnected] = useState(false);
+  const [xpAircraftIcao, setXpAircraftIcao] = useState('');
+  const [xpAircraftTailnum, setXpAircraftTailnum] = useState('');
   const [flightPhase, setFlightPhase] = useState('OFFLINE');
+
+  const isModelMismatch = Boolean(
+    xpConnected &&
+    xpAircraftIcao &&
+    selectedAircraft &&
+    xpAircraftIcao.toUpperCase() !== (selectedAircraft.aircraft_type || '').toUpperCase()
+  );
+
+  const matchingFleetAircraft = xpAircraftIcao
+    ? fleet.find(ac => (ac.aircraft_type || '').toUpperCase() === xpAircraftIcao.toUpperCase())
+    : null;
 
   const showNotice = (msg, type = 'info') => {
     setNotification({ msg, type });
@@ -420,6 +433,8 @@ export default function App() {
         try {
           const data = JSON.parse(event.data);
           setXpConnected(data.xp_connected);
+          setXpAircraftIcao(data.xp_aircraft_icao || '');
+          setXpAircraftTailnum(data.xp_aircraft_tailnum || '');
           setFlightPhase(data.flight_phase);
           if (data.telemetry) {
             setLiveTelemetry(data.telemetry);
@@ -746,6 +761,11 @@ export default function App() {
   // Flight lifecycle
   const handleStartFlight = async (jobId = null) => {
     if (!selectedAircraft) return;
+    if (isModelMismatch && !jobId) {
+      if (!confirm(`⚠️ ATTENZIONE MODELLO DIVERSO!\n\nIn X-Plane 12 risulta caricato: ${xpAircraftIcao} (${xpAircraftTailnum || 'N/D'})\nIn SkyOps XP hai selezionato: ${selectedAircraft.tail_number} (${selectedAircraft.aircraft_type})\n\nVuoi avviare comunque il monitoraggio volo su ${selectedAircraft.tail_number}?`)) {
+        return;
+      }
+    }
     try {
       const res = await fetch('/api/flights/start', {
         method: 'POST',
@@ -1053,12 +1073,22 @@ export default function App() {
 
             {/* X-Plane 12 Connection Badge */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono font-semibold ${
-              xpConnected 
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
-                : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${xpConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-              {xpConnected ? 'XP12 CONNESSO' : 'XP12 OFFLINE'}
+              !xpConnected
+                ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                : isModelMismatch
+                  ? 'bg-amber-500/15 border-amber-500/50 text-amber-300'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+            }`}
+            title={xpConnected && xpAircraftIcao ? `Aereo attivo su X-Plane 12: ${xpAircraftIcao} (${xpAircraftTailnum || 'N/D'})` : ''}
+            >
+              <span className={`w-2 h-2 rounded-full ${
+                !xpConnected ? 'bg-rose-400' : isModelMismatch ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'
+              }`} />
+              {!xpConnected
+                ? 'XP12 OFFLINE'
+                : xpAircraftIcao
+                  ? `XP12: ${xpAircraftIcao}${isModelMismatch ? ' ⚠️' : ''}`
+                  : 'XP12 CONNESSO'}
             </div>
 
             {/* Reset Profile Button */}
@@ -1110,6 +1140,45 @@ export default function App() {
         {/* TAB 1: FLIGHT DECK & HUD */}
         {activeTab === 'flight' && (
           <div className="space-y-6">
+            {/* Aircraft Mismatch Warning Banner */}
+            {isModelMismatch && (
+              <div className="p-4 rounded-xl border border-amber-500/60 bg-amber-950/35 flex flex-wrap items-center justify-between gap-4 shadow-lg">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle size={22} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-sm font-bold text-amber-300 font-mono">
+                      MODELLO DIVERSO CARICATO IN X-PLANE 12!
+                    </div>
+                    <p className="text-xs text-slate-200 mt-0.5">
+                      Su X-Plane 12 stai pilotando un <strong className="text-white font-mono">{xpAircraftIcao}</strong>
+                      {xpAircraftTailnum ? <span className="text-amber-200 font-mono"> ({xpAircraftTailnum})</span> : ''}, 
+                      mentre in SkyOps XP è selezionato <strong className="text-white font-mono">{selectedAircraft?.tail_number} ({selectedAircraft?.aircraft_type})</strong>.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {matchingFleetAircraft ? (
+                    <button
+                      onClick={() => {
+                        setSelectedAircraft(matchingFleetAircraft);
+                        showNotice(`Selezionato ${matchingFleetAircraft.tail_number} (${matchingFleetAircraft.aircraft_type}) per allineamento a XP12`, 'success');
+                      }}
+                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-bold text-xs px-3.5 py-2 rounded-lg shadow transition"
+                    >
+                      Usa {matchingFleetAircraft.tail_number} ({matchingFleetAircraft.aircraft_type})
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setActiveTab('rental')}
+                      className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 font-mono font-bold text-xs px-3.5 py-2 rounded-lg transition"
+                    >
+                      Cerca {xpAircraftIcao} nel Mercato
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Mission Overview Banner */}
             <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
               <div>
