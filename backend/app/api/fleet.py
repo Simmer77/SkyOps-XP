@@ -12,6 +12,7 @@ from app.models.schema import Aircraft, Company, MaintenanceEvent, MarketAircraf
 from app.services.xp_connector import xp_connector
 from app.services.maintenance import MaintenanceService
 from app.services.economy import EconomyService
+from app.services.dealerships import DealershipService
 from app.core.config import settings
 
 router = APIRouter(prefix="/fleet", tags=["Fleet"])
@@ -134,6 +135,7 @@ class AcquireAircraftRequest(BaseModel):
     market_aircraft_id: int
     tail_number: str
     acquisition_mode: str = "RENTAL_HOURLY" # "RENTAL_HOURLY", "OWNED_CASH", "FINANCIAL_LEASE", "FINANCED_LOAN"
+    delivery_option: str = "DELIVER_HOME" # "DELIVER_HOME", "PICKUP_DEALERSHIP" (only for purchases)
     pickup_icao: Optional[str] = None
 
 @router.get("/")
@@ -146,8 +148,14 @@ async def get_fleet(db: AsyncSession = Depends(get_db)):
 async def get_synced_market(db: AsyncSession = Depends(get_db)):
     """
     Restituisce tutti i velivoli sincronizzati da X-Plane 12 organizzati per il Mercato & Noleggio,
-    con calcolo trasparente di acquisto cash, leasing finanziario, mutuo bancario e noleggio orario.
+    con calcolo trasparente di acquisto cash, leasing finanziario, mutuo bancario, noleggio orario
+    e info sede di vendita / consegna ferry nel continente della base operativa.
     """
+    comp_res = await db.execute(select(Company).limit(1))
+    company = comp_res.scalars().first()
+    home_base = (company.home_base_icao if company and company.home_base_icao else "LIRN")
+    xp12_path = (company.xp12_install_path if company else None)
+
     result = await db.execute(
         select(MarketAircraft).order_by(MarketAircraft.category, MarketAircraft.manufacturer, MarketAircraft.purchase_price_eur)
     )
@@ -165,6 +173,13 @@ async def get_synced_market(db: AsyncSession = Depends(get_db)):
         loan_down = round(price * 0.10, 2)
         loan_total_financed = round(price * 0.90 * 1.06, 2)
         loan_weekly = round(loan_total_financed / 104.0, 2)
+        
+        delivery_info = DealershipService.get_dealership_for_aircraft(
+            manufacturer=m.manufacturer,
+            category=m.category,
+            home_base_icao=home_base,
+            xp12_path=xp12_path
+        )
         
         enriched.append({
             "id": m.id,
@@ -189,6 +204,7 @@ async def get_synced_market(db: AsyncSession = Depends(get_db)):
             "image_url": m.image_url,
             "default_tail": m.default_tail,
             "description": m.description,
+            "delivery_info": delivery_info,
             "financing_options": {
                 "cash": {"down_payment_eur": price, "weekly_eur": 0.0, "weeks": 0},
                 "financial_lease": {"down_payment_eur": lease_down, "weekly_eur": lease_weekly, "weeks": 52, "total_financed_eur": lease_total_financed},
@@ -202,7 +218,8 @@ async def get_synced_market(db: AsyncSession = Depends(get_db)):
 async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession = Depends(get_db)):
     """
     Acquisisce un velivolo dal catalogo Mercato & Noleggio (XP12) secondo la formula scelta:
-    Noleggio Orario, Acquisto Immediato Cash, Leasing Finanziario o Mutuo Bancario.
+    Noleggio Orario, Acquisto Immediato Cash, Leasing Finanziario o Mutuo Bancario,
+    con scelta tra ritiro presso la sede costruttore nel continente o consegna ferry alla base.
     """
     m = await db.get(MarketAircraft, req.market_aircraft_id)
     if not m:
@@ -250,11 +267,33 @@ async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession 
         weekly_payment = round(financed_remaining / 104.0, 2)
     else:
         raise HTTPException(status_code=400, detail="Modalità di acquisizione non valida.")
-        
-    if down_payment > 0 and company.cash_balance < down_payment:
+
+    # Calculate delivery & dealership location (for purchases only)
+    ferry_fee = 0.0
+    delivery_note = ""
+    if mode == "RENTAL_HOURLY":
+        final_icao = (req.pickup_icao or company.home_base_icao or "LIRN").strip().upper()
+    else:
+        delivery_info = DealershipService.get_dealership_for_aircraft(
+            manufacturer=m.manufacturer,
+            category=m.category,
+            home_base_icao=company.home_base_icao or "LIRN",
+            xp12_path=company.xp12_install_path
+        )
+        if req.delivery_option.upper() == "DELIVER_HOME":
+            ferry_fee = delivery_info["ferry_delivery_fee_eur"]
+            final_icao = company.home_base_icao or "LIRN"
+            delivery_note = f"Consegnato con volo Ferry presso {final_icao} ({delivery_info['dealership_icao']} ➔ {final_icao})"
+        else:
+            ferry_fee = 0.0
+            final_icao = delivery_info["dealership_icao"]
+            delivery_note = f"Pronto per il ritiro presso sede costruttore {final_icao} ({delivery_info['dealership_name']})"
+
+    total_due = round(down_payment + ferry_fee, 2)
+    if total_due > 0 and company.cash_balance < total_due:
         raise HTTPException(
             status_code=400, 
-            detail=f"Fondi insufficienti (€ {company.cash_balance:,.2f} disponibili vs € {down_payment:,.2f} richiesti). Valuta il Leasing, il Mutuo o il Noleggio Orario."
+            detail=f"Fondi insufficienti (€ {company.cash_balance:,.2f} disponibili vs € {total_due:,.2f} richiesti tra anticipo e consegna). Valuta il ritiro in sede, il Mutuo o il Noleggio."
         )
         
     if down_payment > 0:
@@ -268,12 +307,23 @@ async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession 
             category="AIRCRAFT_PURCHASE",
             title=f"{mode_names.get(mode, 'Acquisto')}: {m.name} ({tail})",
             amount_eur=-down_payment,
-            description=f"Immatricolazione {tail} ({m.aircraft_type}) presso base {company.home_base_icao}",
+            description=f"Immatricolazione {tail} ({m.aircraft_type}) — {delivery_note}",
+            aircraft_tail=tail,
+            company=company
+        )
+
+    if ferry_fee > 0:
+        await EconomyService.record_transaction(
+            session=db,
+            category="DELIVERY_FEE",
+            title=f"Consegna Ferry a Domicilio {tail}",
+            amount_eur=-ferry_fee,
+            description=delivery_note,
             aircraft_tail=tail,
             company=company
         )
         
-    base_icao = (req.pickup_icao or company.home_base_icao or "LIRN").strip().upper()
+    base_icao = final_icao
     cond = m.condition_pct or 95.0
     
     aircraft = Aircraft(

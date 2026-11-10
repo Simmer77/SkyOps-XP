@@ -55,6 +55,7 @@ export default function App() {
   const [showAcquireModal, setShowAcquireModal] = useState(false);
   const [selectedMarketItem, setSelectedMarketItem] = useState(null);
   const [acquireMode, setAcquireMode] = useState('RENTAL_HOURLY');
+  const [deliveryOption, setDeliveryOption] = useState('PICKUP_DEALERSHIP'); // 'PICKUP_DEALERSHIP' | 'DELIVER_HOME'
   const [acquireTail, setAcquireTail] = useState('');
   const [acquireIcao, setAcquireIcao] = useState('LIRN');
 
@@ -375,6 +376,7 @@ export default function App() {
           market_aircraft_id: selectedMarketItem.id,
           tail_number: acquireTail.trim().toUpperCase(),
           acquisition_mode: acquireMode,
+          delivery_option: deliveryOption,
           pickup_icao: acquireIcao.trim().toUpperCase() || systemStatus?.company?.home_base_icao || 'LIRN'
         })
       });
@@ -2283,10 +2285,19 @@ export default function App() {
                 </div>
               )}
 
-              {/* ACQUISITION MODAL (4 REAL-WORLD MODES) */}
+              {/* ACQUISITION MODAL (4 REAL-WORLD MODES + CONTINENTAL DEALERSHIP DELIVERY) */}
               {showAcquireModal && selectedMarketItem && (() => {
                 const cash = systemStatus?.company?.cash_balance || 0;
                 const opts = selectedMarketItem.financing_options;
+                const delInfo = selectedMarketItem.delivery_info || {
+                  continent_label: 'Europa',
+                  home_base_icao: systemStatus?.company?.home_base_icao || 'LIRN',
+                  dealership_icao: 'LFPB',
+                  dealership_name: 'Sede Regionale',
+                  distance_nm: 0,
+                  ferry_delivery_fee_eur: 0
+                };
+
                 const modes = [
                   {
                     id: 'RENTAL_HOURLY',
@@ -2322,11 +2333,14 @@ export default function App() {
                   }
                 ];
                 const currentModeObj = modes.find(m => m.id === acquireMode) || modes[0];
-                const hasEnoughCash = cash >= currentModeObj.down;
+                const isPurchase = acquireMode !== 'RENTAL_HOURLY';
+                const ferryCost = (isPurchase && deliveryOption === 'DELIVER_HOME') ? (delInfo.ferry_delivery_fee_eur || 0) : 0;
+                const totalDueToday = currentModeObj.down + ferryCost;
+                const hasEnoughCash = cash >= totalDueToday;
 
                 return (
                   <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-                    <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-2xl w-full space-y-5 my-8">
+                    <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-2xl w-full space-y-5 my-8 max-h-[92vh] overflow-y-auto">
                       <div className="flex justify-between items-start border-b border-slate-800 pb-3">
                         <div className="flex items-center gap-3">
                           {selectedMarketItem.image_url && (
@@ -2342,8 +2356,8 @@ export default function App() {
                         <button onClick={() => setShowAcquireModal(false)} className="text-slate-400 hover:text-white text-lg">✕</button>
                       </div>
 
-                      {/* Tail & Base */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-mono text-xs">
+                      {/* Tail & Rental Base */}
+                      <div className={`grid grid-cols-1 ${!isPurchase ? 'sm:grid-cols-2' : ''} gap-4 font-mono text-xs`}>
                         <div>
                           <label className="text-slate-400 block mb-1">Marche Immatricolazione (Tail Number)</label>
                           <input
@@ -2353,16 +2367,18 @@ export default function App() {
                             className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-cyan-300 font-bold focus:outline-none focus:border-cyan-500"
                           />
                         </div>
-                        <div>
-                          <label className="text-slate-400 block mb-1">Aeroporto di Consegna / Ritiro (ICAO)</label>
-                          <input
-                            type="text"
-                            maxLength={4}
-                            value={acquireIcao}
-                            onChange={(e) => setAcquireIcao(e.target.value.toUpperCase())}
-                            className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white font-bold focus:outline-none focus:border-cyan-500"
-                          />
-                        </div>
+                        {!isPurchase && (
+                          <div>
+                            <label className="text-slate-400 block mb-1">Aeroporto di Ritiro Noleggio (ICAO)</label>
+                            <input
+                              type="text"
+                              maxLength={4}
+                              value={acquireIcao}
+                              onChange={(e) => setAcquireIcao(e.target.value.toUpperCase())}
+                              className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white font-bold focus:outline-none focus:border-cyan-500"
+                            />
+                          </div>
+                        )}
                       </div>
 
                       {/* 4 Acquisition Mode Selector Cards */}
@@ -2387,7 +2403,7 @@ export default function App() {
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 whitespace-nowrap">{m.badge}</span>
                                 </div>
                                 <div className="mt-1.5 flex justify-between items-baseline">
-                                  <span className="text-slate-400">Oggi:</span>
+                                  <span className="text-slate-400">Quota Aereo:</span>
                                   <span className={`font-bold text-sm ${affordable ? 'text-emerald-400' : 'text-rose-400'}`}>
                                     {formatEuro(m.down)}
                                   </span>
@@ -2399,6 +2415,75 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Delivery Options (For Purchases Only!) */}
+                      {isPurchase && (
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between text-xs font-mono">
+                            <label className="text-slate-300 font-bold">
+                              Logistica Consegna Velivolo (Area {delInfo.continent_label})
+                            </label>
+                            <span className="text-[11px] text-cyan-400">
+                              Hub Costruttore: <strong>{delInfo.dealership_icao}</strong>
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                            {/* Option 1: Pickup at Continental Dealership */}
+                            <div
+                              onClick={() => setDeliveryOption('PICKUP_DEALERSHIP')}
+                              className={`p-3 rounded-xl border cursor-pointer transition ${
+                                deliveryOption === 'PICKUP_DEALERSHIP'
+                                  ? 'bg-emerald-950/35 border-emerald-400 ring-1 ring-emerald-400'
+                                  : 'bg-slate-900/70 border-slate-800 hover:border-slate-600'
+                              }`}
+                            >
+                              <div className="flex justify-between items-start gap-2">
+                                <span className={`font-bold ${deliveryOption === 'PICKUP_DEALERSHIP' ? 'text-emerald-300' : 'text-white'}`}>
+                                  ✈️ Ritiro in Sede di Vendita
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                                  GRATIS
+                                </span>
+                              </div>
+                              <div className="mt-1.5 text-[11px] text-cyan-300 font-bold">
+                                Aeroporto: {delInfo.dealership_icao}
+                              </div>
+                              <div className="text-[10px] text-slate-300 font-sans truncate" title={delInfo.dealership_name}>
+                                {delInfo.dealership_name}
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-sans mt-1.5 leading-snug">
+                                Volerai tu stesso il trasferimento (Ferry Flight) di {delInfo.distance_nm} NM verso la tua base {delInfo.home_base_icao}!
+                              </p>
+                            </div>
+
+                            {/* Option 2: Ferry Delivery to Home Base */}
+                            <div
+                              onClick={() => setDeliveryOption('DELIVER_HOME')}
+                              className={`p-3 rounded-xl border cursor-pointer transition ${
+                                deliveryOption === 'DELIVER_HOME'
+                                  ? 'bg-amber-950/35 border-amber-400 ring-1 ring-amber-400'
+                                  : 'bg-slate-900/70 border-slate-800 hover:border-slate-600'
+                              }`}
+                            >
+                              <div className="flex justify-between items-start gap-2">
+                                <span className={`font-bold ${deliveryOption === 'DELIVER_HOME' ? 'text-amber-300' : 'text-white'}`}>
+                                  🚚 Consegna alla Base ({delInfo.home_base_icao})
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold whitespace-nowrap">
+                                  +{formatEuro(delInfo.ferry_delivery_fee_eur)}
+                                </span>
+                              </div>
+                              <div className="mt-1.5 text-[11px] text-amber-200 font-bold">
+                                Tratta Ferry: {delInfo.dealership_icao} ➔ {delInfo.home_base_icao} ({delInfo.distance_nm} NM)
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-sans mt-1.5 leading-snug">
+                                Un equipaggio Ferry certificato consegnerà il velivolo pronto al volo direttamente nel tuo hangar a {delInfo.home_base_icao}.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Financial Summary Banner */}
                       <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 font-mono text-xs space-y-1">
                         <div className="flex justify-between">
@@ -2406,20 +2491,30 @@ export default function App() {
                           <span className="font-bold text-white">{formatEuro(cash)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Esborso Immediato Richiesto:</span>
+                          <span className="text-slate-400">Quota Acquisizione Velivolo:</span>
+                          <span className="text-slate-200">-{formatEuro(currentModeObj.down)}</span>
+                        </div>
+                        {ferryCost > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Consegna Ferry a Domicilio ({delInfo.distance_nm} NM):</span>
+                            <span className="text-amber-300">-{formatEuro(ferryCost)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between border-t border-slate-800 pt-1">
+                          <span className="text-slate-300 font-bold">Totale Esborso Oggi:</span>
                           <span className={`font-bold ${hasEnoughCash ? 'text-amber-300' : 'text-rose-400'}`}>
-                            -{formatEuro(currentModeObj.down)}
+                            -{formatEuro(totalDueToday)}
                           </span>
                         </div>
-                        <div className="flex justify-between border-t border-slate-800 pt-1">
+                        <div className="flex justify-between">
                           <span className="text-slate-400">Saldo Cassa Dopo Operazione:</span>
                           <span className={`font-bold ${hasEnoughCash ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {formatEuro(cash - currentModeObj.down)}
+                            {formatEuro(cash - totalDueToday)}
                           </span>
                         </div>
                         {!hasEnoughCash && (
                           <div className="text-[11px] text-rose-400 font-sans pt-1">
-                            ⚠️ Fondi liquidi insufficienti per questa formula. Seleziona il Mutuo Bancario, il Leasing o il Noleggio Orario.
+                            ⚠️ Fondi liquidi insufficienti per questa operazione. Valuta il ritiro in sede (risparmi {formatEuro(delInfo.ferry_delivery_fee_eur)}), il Mutuo o il Noleggio Orario.
                           </div>
                         )}
                       </div>
