@@ -139,15 +139,21 @@ class EconomyService:
         details = []
         total_hangar = 0.0
         total_insurance = 0.0
+        total_financing = 0.0
         
         for ac in owned_aircraft:
             specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
             hangar = round(specs["hangar_weekly_eur"] * factor, 2)
             insurance = round(specs["insurance_weekly_eur"] * factor, 2)
-            subtotal = round(hangar + insurance, 2)
+            financing = 0.0
+            if (ac.remaining_payments_weeks or 0) > 0 and (ac.weekly_payment_eur or 0.0) > 0:
+                financing = round(ac.weekly_payment_eur * factor, 2)
+                
+            subtotal = round(hangar + insurance + financing, 2)
             
             total_hangar += hangar
             total_insurance += insurance
+            total_financing += financing
             details.append({
                 "aircraft_id": ac.id,
                 "tail_number": ac.tail_number,
@@ -155,6 +161,7 @@ class EconomyService:
                 "category": ac.category,
                 "hangar_eur": hangar,
                 "insurance_eur": insurance,
+                "financing_eur": financing,
                 "subtotal_eur": subtotal
             })
             
@@ -163,7 +170,8 @@ class EconomyService:
             "owned_aircraft_count": len(owned_aircraft),
             "total_hangar_eur": round(total_hangar, 2),
             "total_insurance_eur": round(total_insurance, 2),
-            "total_fixed_eur": round(total_hangar + total_insurance, 2),
+            "total_financing_eur": round(total_financing, 2),
+            "total_fixed_eur": round(total_hangar + total_insurance + total_financing, 2),
             "aircraft_breakdown": details
         }
 
@@ -171,14 +179,12 @@ class EconomyService:
     async def advance_operating_cycle(session: AsyncSession, days: int = 7) -> Dict[str, Any]:
         """
         Avanza il giorno operativo e il calendario virtuale dell'azienda, addebitando
-        i costi fissi (hangar e assicurazione) per tutti gli aerei di proprietà.
+        i costi fissi (hangar, assicurazione e rate leasing/mutuo) per tutti gli aerei di proprietà.
         """
         comp_res = await session.execute(select(Company).limit(1))
         company = comp_res.scalars().first()
         if not company:
-            company = Company(cash_balance=175000.0, operating_day=1)
-            session.add(company)
-            await session.flush()
+            raise ValueError("Nessun profilo aziendale attivo.")
             
         old_day = company.operating_day or 1
         old_date = company.virtual_date or datetime.now(timezone.utc)
@@ -188,6 +194,7 @@ class EconomyService:
         owned_aircraft = ac_res.scalars().all()
         
         factor = days / 7.0
+        weeks_passed = max(1, round(days / 7.0)) if days >= 7 else 0
         total_deductions = 0.0
         deductions_list = []
         
@@ -195,6 +202,7 @@ class EconomyService:
             specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
             hangar_cost = round(specs["hangar_weekly_eur"] * factor, 2)
             insurance_cost = round(specs["insurance_weekly_eur"] * factor, 2)
+            financing_cost = 0.0
             
             # Addebito Hangar
             if hangar_cost > 0:
@@ -222,12 +230,36 @@ class EconomyService:
                 )
                 total_deductions += insurance_cost
                 
+            # Addebito Rata Leasing Finanziario / Mutuo Bancario
+            if (ac.remaining_payments_weeks or 0) > 0 and (ac.weekly_payment_eur or 0.0) > 0:
+                financing_cost = round(ac.weekly_payment_eur * factor, 2)
+                if financing_cost > 0:
+                    mode_label = "Leasing Finanziario" if ac.acquisition_mode == "FINANCIAL_LEASE" else "Mutuo Aeronautico"
+                    await EconomyService.record_transaction(
+                        session=session,
+                        category="FINANCING",
+                        title=f"Rata {mode_label} {ac.tail_number}",
+                        amount_eur=-financing_cost,
+                        description=f"Rata periodica ({days} gg) per {ac.name} - Settimane residue: {max(0, (ac.remaining_payments_weeks or 0) - weeks_passed)}",
+                        aircraft_tail=ac.tail_number,
+                        company=company
+                    )
+                    total_deductions += financing_cost
+                    ac.financed_amount_remaining_eur = max(0.0, round((ac.financed_amount_remaining_eur or 0.0) - financing_cost, 2))
+                    if weeks_passed > 0:
+                        ac.remaining_payments_weeks = max(0, (ac.remaining_payments_weeks or 0) - weeks_passed)
+                        if ac.remaining_payments_weeks == 0:
+                            ac.acquisition_mode = "OWNED_CASH"
+                            ac.weekly_payment_eur = 0.0
+                            ac.financed_amount_remaining_eur = 0.0
+                
             deductions_list.append({
                 "tail_number": ac.tail_number,
                 "name": ac.name,
                 "hangar_cost": hangar_cost,
                 "insurance_cost": insurance_cost,
-                "total": round(hangar_cost + insurance_cost, 2)
+                "financing_cost": financing_cost,
+                "total": round(hangar_cost + insurance_cost + financing_cost, 2)
             })
 
         # 2. Advance operational timeline
@@ -262,14 +294,33 @@ class EconomyService:
         comp_res = await session.execute(select(Company).limit(1))
         company = comp_res.scalars().first()
         if not company:
-            company = Company(cash_balance=175000.0, operating_day=1)
-            session.add(company)
-            await session.commit()
+            return {
+                "operating_day": 1,
+                "virtual_date": datetime.now(timezone.utc).isoformat(),
+                "balance_sheet": {
+                    "cash_balance_eur": 0.0,
+                    "fleet_book_value_eur": 0.0,
+                    "financed_debt_eur": 0.0,
+                    "total_net_worth_eur": 0.0,
+                    "owned_aircraft_count": 0
+                },
+                "income_statement": {
+                    "gross_revenue_eur": 0.0,
+                    "direct_operating_costs": {"total_eur": 0.0, "fuel_eur": 0.0, "landing_fees_eur": 0.0, "aircraft_leases_eur": 0.0},
+                    "maintenance_costs": {"total_eur": 0.0},
+                    "fixed_overheads": {"total_eur": 0.0, "hangar_eur": 0.0, "insurance_eur": 0.0, "financing_eur": 0.0},
+                    "total_expenses_eur": 0.0,
+                    "net_profit_eur": 0.0,
+                    "profit_margin_pct": 0.0
+                },
+                "upcoming_fixed_costs_7d": {"period_days": 7, "owned_aircraft_count": 0, "total_hangar_eur": 0.0, "total_insurance_eur": 0.0, "total_financing_eur": 0.0, "total_fixed_eur": 0.0, "aircraft_breakdown": []}
+            }
             
-        # 2. Owned aircraft valuation
+        # 2. Owned aircraft valuation & active financing debt
         ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
         owned_aircraft = ac_res.scalars().all()
         fleet_book_value = sum(ac.purchase_price_eur or 0.0 for ac in owned_aircraft)
+        financed_debt = sum(ac.financed_amount_remaining_eur or 0.0 for ac in owned_aircraft)
         
         # 3. Aggregates from FinancialTransactions (or flight logs & maintenance if transactions are new)
         tx_res = await session.execute(select(FinancialTransaction))
@@ -282,7 +333,7 @@ class EconomyService:
         expense_maint = abs(sum(t.amount_eur for t in transactions if t.category in ["MAINTENANCE", "EXPENSE_MAINTENANCE"]))
         expense_hangar = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_HANGAR"]))
         expense_insurance = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_INSURANCE"]))
-        expense_purchases = abs(sum(t.amount_eur for t in transactions if t.category in ["AIRCRAFT_PURCHASE", "CAPITAL_PURCHASE"]))
+        expense_financing = abs(sum(t.amount_eur for t in transactions if t.category in ["FINANCING"]))
         
         # If no transactions exist yet, calculate from existing flight logs & maintenance events to preserve history
         if not transactions:
@@ -298,7 +349,7 @@ class EconomyService:
             expense_maint = sum(m.cost_usd or 0.0 for m in events)
             
         direct_operating_costs = round(expense_fuel + expense_landing + expense_lease, 2)
-        fixed_overheads = round(expense_hangar + expense_insurance, 2)
+        fixed_overheads = round(expense_hangar + expense_insurance + expense_financing, 2)
         total_expenses = round(direct_operating_costs + expense_maint + fixed_overheads, 2)
         net_profit = round(revenue_flight - total_expenses, 2)
         margin_pct = round((net_profit / revenue_flight * 100.0), 1) if revenue_flight > 0 else 0.0
@@ -314,7 +365,8 @@ class EconomyService:
             "balance_sheet": {
                 "cash_balance_eur": company.cash_balance,
                 "fleet_book_value_eur": round(fleet_book_value, 2),
-                "total_net_worth_eur": round(company.cash_balance + fleet_book_value, 2),
+                "financed_debt_eur": round(financed_debt, 2),
+                "total_net_worth_eur": round(company.cash_balance + fleet_book_value - financed_debt, 2),
                 "owned_aircraft_count": len(owned_aircraft)
             },
             
@@ -333,7 +385,8 @@ class EconomyService:
                 "fixed_overheads": {
                     "total_eur": fixed_overheads,
                     "hangar_eur": round(expense_hangar, 2),
-                    "insurance_eur": round(expense_insurance, 2)
+                    "insurance_eur": round(expense_insurance, 2),
+                    "financing_eur": round(expense_financing, 2)
                 },
                 "total_expenses_eur": total_expenses,
                 "net_profit_eur": net_profit,

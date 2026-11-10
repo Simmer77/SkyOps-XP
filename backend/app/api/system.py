@@ -8,6 +8,7 @@ import json
 from app.core.database import get_db
 from app.models.schema import Company
 from app.services.xp_connector import xp_connector
+from app.services.xp_scanner import XP12ScannerService
 from app.services.maintenance import MaintenanceService
 from app.services.economy import EconomyService
 from app.services.flight_tracker import flight_tracker
@@ -22,21 +23,28 @@ class FailureInjectRequest(BaseModel):
 async def get_system_status(db: AsyncSession = Depends(get_db)):
     comp_res = await db.execute(select(Company).limit(1))
     company = comp_res.scalars().first()
+    detected_xp = XP12ScannerService.detect_xp12_path() or ""
     
     return {
+        "has_profile": company is not None,
+        "xp12_detected_path": detected_xp,
         "xp_connected": xp_connector.is_connected,
         "xp_ip": xp_connector.xp_ip,
         "xp_port": xp_connector.xp_port,
         "active_flight_phase": flight_tracker.phase,
         "company": {
-            "name": company.name if company else "SkyOps Aviation",
-            "cash_balance": company.cash_balance if company else 150000.0,
-            "reputation": company.reputation if company else 100.0,
-            "operating_day": company.operating_day if (company and company.operating_day) else 1,
-            "virtual_date": company.virtual_date.isoformat() if (company and company.virtual_date) else None,
-            "simbrief_username": company.simbrief_username if company else "",
-            "simbrief_pilot_id": company.simbrief_pilot_id if company else "",
-        },
+            "name": company.name,
+            "home_base_icao": company.home_base_icao or "LIRN",
+            "difficulty_level": company.difficulty_level or "STANDARD",
+            "starting_capital_eur": company.starting_capital_eur or 150000.0,
+            "cash_balance": company.cash_balance,
+            "reputation": company.reputation,
+            "operating_day": company.operating_day or 1,
+            "virtual_date": company.virtual_date.isoformat() if company.virtual_date else None,
+            "simbrief_username": company.simbrief_username or "",
+            "simbrief_pilot_id": company.simbrief_pilot_id or "",
+            "xp12_install_path": company.xp12_install_path or detected_xp,
+        } if company else None,
         "services_catalog": MaintenanceService.get_service_costs()
     }
 

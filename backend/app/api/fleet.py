@@ -8,7 +8,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.models.schema import Aircraft, Company, MaintenanceEvent
+from app.models.schema import Aircraft, Company, MaintenanceEvent, MarketAircraft
 from app.services.xp_connector import xp_connector
 from app.services.maintenance import MaintenanceService
 from app.services.economy import EconomyService
@@ -130,11 +130,195 @@ class RefuelRequest(BaseModel):
 class ServiceRequest(BaseModel):
     service_code: str
 
+class AcquireAircraftRequest(BaseModel):
+    market_aircraft_id: int
+    tail_number: str
+    acquisition_mode: str = "RENTAL_HOURLY" # "RENTAL_HOURLY", "OWNED_CASH", "FINANCIAL_LEASE", "FINANCED_LOAN"
+    pickup_icao: Optional[str] = None
+
 @router.get("/")
 async def get_fleet(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Aircraft))
     aircraft_list = result.scalars().all()
     return aircraft_list
+
+@router.get("/market")
+async def get_synced_market(db: AsyncSession = Depends(get_db)):
+    """
+    Restituisce tutti i velivoli sincronizzati da X-Plane 12 organizzati per il Mercato & Noleggio,
+    con calcolo trasparente di acquisto cash, leasing finanziario, mutuo bancario e noleggio orario.
+    """
+    result = await db.execute(
+        select(MarketAircraft).order_by(MarketAircraft.category, MarketAircraft.manufacturer, MarketAircraft.purchase_price_eur)
+    )
+    items = result.scalars().all()
+    
+    enriched = []
+    for m in items:
+        price = m.purchase_price_eur or 0.0
+        # Financial lease: 20% down, rest +4% interest over 52 weeks
+        lease_down = round(price * 0.20, 2)
+        lease_total_financed = round(price * 0.80 * 1.04, 2)
+        lease_weekly = round(lease_total_financed / 52.0, 2)
+        
+        # Bank loan: 10% down, rest +6% interest over 104 weeks
+        loan_down = round(price * 0.10, 2)
+        loan_total_financed = round(price * 0.90 * 1.06, 2)
+        loan_weekly = round(loan_total_financed / 104.0, 2)
+        
+        enriched.append({
+            "id": m.id,
+            "acf_path": m.acf_path,
+            "name": m.name,
+            "aircraft_type": m.aircraft_type,
+            "manufacturer": m.manufacturer,
+            "studio": m.studio,
+            "category": m.category,
+            "fuel_capacity_kg": m.fuel_capacity_kg,
+            "mtow_kg": m.mtow_kg,
+            "cruise_speed_kts": m.cruise_speed_kts,
+            "num_engines": m.num_engines,
+            "engine_type": m.engine_type,
+            "avionics_system": m.avionics_system,
+            "year_manufactured": m.year_manufactured,
+            "airframe_hours": m.airframe_hours,
+            "condition_pct": m.condition_pct,
+            "is_used": m.is_used,
+            "purchase_price_eur": price,
+            "hourly_lease_rate_eur": m.hourly_lease_rate_eur,
+            "image_url": m.image_url,
+            "default_tail": m.default_tail,
+            "description": m.description,
+            "financing_options": {
+                "cash": {"down_payment_eur": price, "weekly_eur": 0.0, "weeks": 0},
+                "financial_lease": {"down_payment_eur": lease_down, "weekly_eur": lease_weekly, "weeks": 52, "total_financed_eur": lease_total_financed},
+                "bank_loan": {"down_payment_eur": loan_down, "weekly_eur": loan_weekly, "weeks": 104, "total_financed_eur": loan_total_financed},
+                "rental_hourly": {"down_payment_eur": 0.0, "hourly_eur": m.hourly_lease_rate_eur}
+            }
+        })
+    return enriched
+
+@router.post("/acquire")
+async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Acquisisce un velivolo dal catalogo Mercato & Noleggio (XP12) secondo la formula scelta:
+    Noleggio Orario, Acquisto Immediato Cash, Leasing Finanziario o Mutuo Bancario.
+    """
+    m = await db.get(MarketAircraft, req.market_aircraft_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="Modello non trovato nel Mercato.")
+        
+    comp_res = await db.execute(select(Company).limit(1))
+    company = comp_res.scalars().first()
+    if not company:
+        raise HTTPException(status_code=400, detail="Profilo aziendale non inizializzato.")
+        
+    tail = req.tail_number.strip().upper()
+    if not tail:
+        raise HTTPException(status_code=400, detail="Inserisci le marche (Tail Number) del velivolo.")
+        
+    existing = await db.execute(select(Aircraft).where(Aircraft.tail_number == tail))
+    if existing.scalars().first():
+        raise HTTPException(status_code=400, detail=f"Un aeromobile con marche {tail} è già presente in flotta.")
+        
+    mode = req.acquisition_mode.upper()
+    price = m.purchase_price_eur or 0.0
+    
+    down_payment = 0.0
+    weekly_payment = 0.0
+    remaining_weeks = 0
+    financed_remaining = 0.0
+    ownership = "OWNED"
+    hourly_rate = 0.0
+    display_suffix = ""
+    
+    if mode == "RENTAL_HOURLY":
+        ownership = "LEASED"
+        hourly_rate = m.hourly_lease_rate_eur
+        display_suffix = " (Noleggio)"
+    elif mode == "OWNED_CASH":
+        down_payment = price
+    elif mode == "FINANCIAL_LEASE":
+        down_payment = round(price * 0.20, 2)
+        financed_remaining = round(price * 0.80 * 1.04, 2)
+        remaining_weeks = 52
+        weekly_payment = round(financed_remaining / 52.0, 2)
+    elif mode == "FINANCED_LOAN":
+        down_payment = round(price * 0.10, 2)
+        financed_remaining = round(price * 0.90 * 1.06, 2)
+        remaining_weeks = 104
+        weekly_payment = round(financed_remaining / 104.0, 2)
+    else:
+        raise HTTPException(status_code=400, detail="Modalità di acquisizione non valida.")
+        
+    if down_payment > 0 and company.cash_balance < down_payment:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Fondi insufficienti (€ {company.cash_balance:,.2f} disponibili vs € {down_payment:,.2f} richiesti). Valuta il Leasing, il Mutuo o il Noleggio Orario."
+        )
+        
+    if down_payment > 0:
+        mode_names = {
+            "OWNED_CASH": "Acquisto Immediato Cash",
+            "FINANCIAL_LEASE": "Anticipo Leasing Finanziario (20%)",
+            "FINANCED_LOAN": "Anticipo Finanziamento Bancario (10%)"
+        }
+        await EconomyService.record_transaction(
+            session=db,
+            category="AIRCRAFT_PURCHASE",
+            title=f"{mode_names.get(mode, 'Acquisto')}: {m.name} ({tail})",
+            amount_eur=-down_payment,
+            description=f"Immatricolazione {tail} ({m.aircraft_type}) presso base {company.home_base_icao}",
+            aircraft_tail=tail,
+            company=company
+        )
+        
+    base_icao = (req.pickup_icao or company.home_base_icao or "LIRN").strip().upper()
+    cond = m.condition_pct or 95.0
+    
+    aircraft = Aircraft(
+        tail_number=tail,
+        aircraft_type=m.aircraft_type,
+        name=f"{m.name}{display_suffix}",
+        manufacturer=m.manufacturer,
+        category=m.category,
+        ownership=ownership,
+        current_icao=base_icao,
+        fuel_capacity_kg=m.fuel_capacity_kg,
+        fuel_quantity_kg=round(m.fuel_capacity_kg * 0.5, 1),
+        mtow_kg=m.mtow_kg,
+        airframe_hours=m.airframe_hours,
+        engine_hours=m.airframe_hours,
+        year_manufactured=m.year_manufactured,
+        purchase_date=datetime.now(timezone.utc),
+        purchase_price_eur=price if ownership == "OWNED" else 0.0,
+        image_url=m.image_url or "",
+        engine_type=m.engine_type,
+        avionics_system=m.avionics_system,
+        next_annual_inspection=datetime.now(timezone.utc) + timedelta(days=365),
+        next_50h_inspection_hours=round(m.airframe_hours + 50.0, 1),
+        next_100h_inspection_hours=round(m.airframe_hours + 100.0, 1),
+        health_engine_pct=cond,
+        health_brakes_pct=cond,
+        health_tires_pct=cond,
+        health_airframe_pct=min(100.0, cond + 1.5),
+        health_avionics_pct=min(100.0, cond + 2.0),
+        acquisition_mode=mode,
+        weekly_payment_eur=weekly_payment,
+        remaining_payments_weeks=remaining_weeks,
+        financed_amount_remaining_eur=financed_remaining,
+        hourly_lease_rate=hourly_rate
+    )
+    db.add(aircraft)
+    await db.commit()
+    await db.refresh(aircraft)
+    
+    msg_action = "noleggiato" if mode == "RENTAL_HOURLY" else "acquisito in flotta"
+    return {
+        "message": f"Aeromobile {tail} ({m.name}) {msg_action} con successo presso {base_icao}!",
+        "aircraft": aircraft,
+        "new_cash_balance": company.cash_balance
+    }
 
 @router.get("/rentals/catalog")
 async def get_rental_catalog():

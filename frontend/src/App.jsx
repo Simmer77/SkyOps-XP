@@ -48,7 +48,27 @@ export default function App() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editFormData, setEditFormData] = useState({});
 
-  // Modal State for renting
+  // Modal State for renting / acquiring from XP12 Market
+  const [marketAircraft, setMarketAircraft] = useState([]);
+  const [marketCategoryFilter, setMarketCategoryFilter] = useState('ALL');
+  const [marketManufFilter, setMarketManufFilter] = useState('ALL');
+  const [showAcquireModal, setShowAcquireModal] = useState(false);
+  const [selectedMarketItem, setSelectedMarketItem] = useState(null);
+  const [acquireMode, setAcquireMode] = useState('RENTAL_HOURLY');
+  const [acquireTail, setAcquireTail] = useState('');
+  const [acquireIcao, setAcquireIcao] = useState('LIRN');
+
+  // Onboarding Profile State
+  const [profileForm, setProfileForm] = useState({
+    name: 'AeroSky Executive Ops',
+    home_base_icao: 'LIRN',
+    difficulty_level: 'REALISTIC',
+    starting_capital_eur: 150000,
+    simbrief_id: '',
+    xp12_install_path: ''
+  });
+
+  // Modal State for legacy renting
   const [showRentModal, setShowRentModal] = useState(false);
   const [selectedRentalTemplate, setSelectedRentalTemplate] = useState(null);
   const [rentPickupIcao, setRentPickupIcao] = useState('LIRN');
@@ -96,10 +116,28 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setSystemStatus(data);
+        if (data.xp12_detected_path) {
+          setProfileForm(prev => ({
+            ...prev,
+            xp12_install_path: prev.xp12_install_path || data.xp12_detected_path
+          }));
+        }
         const savedSimbrief = data.company?.simbrief_pilot_id || data.company?.simbrief_username;
         if (savedSimbrief && !simbriefInput) {
           setSimbriefInput(savedSimbrief);
         }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchMarket = async () => {
+    try {
+      const res = await fetch('/api/fleet/market');
+      if (res.ok) {
+        const data = await res.json();
+        setMarketAircraft(data);
       }
     } catch (e) {
       console.error(e);
@@ -226,9 +264,130 @@ export default function App() {
     }
   };
 
+  const handleCreateProfile = async (e) => {
+    if (e) e.preventDefault();
+    if (!profileForm.name.trim()) {
+      showNotice('Inserisci il nome della tua società aerea.', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/company/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...profileForm,
+          sync_xp12: true
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const syncedCount = data.xp12_sync?.count || 0;
+        showNotice(`Profilo creato! Sincronizzati ${syncedCount} velivoli dal tuo X-Plane 12 nel Mercato & Noleggio.`, 'success');
+        await Promise.all([fetchStatus(), fetchMarket(), fetchFleet(), fetchFinances()]);
+        setActiveTab('rental');
+      } else {
+        showNotice(data.detail || 'Errore creazione profilo', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di rete durante la creazione profilo', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSyncXP12 = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/company/sync_xp12', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ xp12_install_path: systemStatus?.company?.xp12_install_path || profileForm.xp12_install_path || null })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        fetchMarket();
+      } else {
+        showNotice(data.detail || 'Errore sincronizzazione XP12', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore sincronizzazione X-Plane 12', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetProfile = async () => {
+    if (!confirm("⚠️ ATTENZIONE: Questa operazione cancellerà definitivamente il tuo profilo aziendale, tutta la flotta, i voli registrati e il bilancio economico riportando il sistema a ZERO.\n\nVuoi procedere?")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/company/reset', { method: 'DELETE' });
+      if (res.ok) {
+        setFleet([]);
+        setMarketAircraft([]);
+        setSelectedAircraft(null);
+        setFinancialOverview(null);
+        setFinancialLedger([]);
+        setFlightHistory([]);
+        setJobs([]);
+        setSimbriefOfp(null);
+        setSimbriefInput('');
+        await fetchStatus();
+        showNotice('Profilo azzerato. Puoi ora creare una nuova compagnia!', 'info');
+      } else {
+        showNotice('Errore durante il reset del profilo', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di connessione durante il reset', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAcquireAircraft = async () => {
+    if (!selectedMarketItem) return;
+    if (!acquireTail.trim()) {
+      showNotice('Inserisci le marche (Tail Number) del velivolo.', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/fleet/acquire', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          market_aircraft_id: selectedMarketItem.id,
+          tail_number: acquireTail.trim().toUpperCase(),
+          acquisition_mode: acquireMode,
+          pickup_icao: acquireIcao.trim().toUpperCase() || systemStatus?.company?.home_base_icao || 'LIRN'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        setShowAcquireModal(false);
+        await Promise.all([fetchStatus(), fetchFleet(), fetchFinances()]);
+        if (data.aircraft) {
+          setSelectedAircraft(data.aircraft);
+        }
+        setActiveTab(acquireMode === 'RENTAL_HOURLY' ? 'rental' : 'fleet');
+      } else {
+        showNotice(data.detail || "Errore durante l'acquisizione", 'error');
+      }
+    } catch (e) {
+      showNotice("Errore di rete durante l'acquisizione", 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchStatus();
     fetchFleet();
+    fetchMarket();
     fetchRentalCatalog();
     fetchFinancialGuide();
     fetchActiveFlight();
@@ -239,6 +398,8 @@ export default function App() {
   useEffect(() => {
     if (activeTab === 'finances') {
       fetchFinances();
+    } else if (activeTab === 'rental') {
+      fetchMarket();
     }
   }, [activeTab]);
 
@@ -673,6 +834,147 @@ export default function App() {
     }
   };
 
+  // Onboarding Screen if no active profile exists
+  if (systemStatus && systemStatus.has_profile === false) {
+    const difficultyOptions = [
+      { id: 'HARDCORE', label: 'Pilota Indipendente (Hardcore)', capital: 35000, desc: 'Capitale minimo. Dovrai partire noleggiando piccoli monomotori GA a ore.' },
+      { id: 'REALISTIC', label: 'Start-up Regionale (Realistica)', capital: 150000, desc: 'Perfetta per noleggiare GA/BizJet o versare l’anticipo di un piccolo usato.' },
+      { id: 'STANDARD', label: 'Compagnia Emergente (Standard)', capital: 500000, desc: 'Budget per acquistare subito il primo aereo GA o avviare un leasing VLJ.' },
+      { id: 'EXECUTIVE', label: 'Operatore Executive (Avanzato)', capital: 2500000, desc: 'Capitale solido per acquisire un Vision Jet o accedere ai Business Jet.' },
+      { id: 'MAGNATE', label: 'Major Airline / Magnate', capital: 25000000, desc: 'Alto capitale per acquistare flotta BizJet e Airliner commerciali.' }
+    ];
+
+    return (
+      <div className="min-h-screen bg-aviation-dark flex items-center justify-center p-6 font-sans relative overflow-hidden">
+        {/* Toast Notification */}
+        {notification && (
+          <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-xl text-sm font-medium border flex items-center gap-2 ${
+            notification.type === 'success' ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700' :
+            notification.type === 'error' ? 'bg-rose-950/90 text-rose-300 border-rose-700' :
+            'bg-cyan-950/90 text-cyan-300 border-cyan-700'
+          }`}>
+            {notification.msg}
+          </div>
+        )}
+
+        <div className="max-w-3xl w-full glass-panel p-8 rounded-2xl border border-cyan-500/30 shadow-2xl space-y-6 relative z-10">
+          <div className="flex items-center gap-4 border-b border-slate-800 pb-5">
+            <div className="p-3 bg-cyan-500/15 border border-cyan-500/40 rounded-xl text-cyan-400">
+              <Plane size={32} className="rotate-45" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-black tracking-wider text-white">SKYOPS XP12</h1>
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">CONFIGURAZIONE INIZIALE</span>
+              </div>
+              <p className="text-sm text-slate-400 mt-0.5">
+                Crea il profilo della tua compagnia aerea e sincronizza gli aeromobili dal tuo X-Plane 12.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleCreateProfile} className="space-y-5 font-mono text-xs" noValidate>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2">
+                <label className="text-slate-300 block mb-1.5 font-semibold">Nome della Società Aerea *</label>
+                <input
+                  type="text"
+                  required
+                  value={profileForm.name}
+                  onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                  placeholder="es. AeroSky Executive Ops"
+                  className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 block mb-1.5 font-semibold">Base Operativa (ICAO) *</label>
+                <input
+                  type="text"
+                  required
+                  maxLength={4}
+                  value={profileForm.home_base_icao}
+                  onChange={(e) => setProfileForm({ ...profileForm, home_base_icao: e.target.value.toUpperCase() })}
+                  placeholder="es. LIRN"
+                  className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-cyan-300 font-bold text-sm uppercase focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+            </div>
+
+            {/* 5 Capital / Difficulty Tiers */}
+            <div>
+              <label className="text-slate-300 block mb-2 font-semibold">Capitale Iniziale & Livello di Progressione (€ Euro)</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {difficultyOptions.map((opt) => {
+                  const selected = profileForm.difficulty_level === opt.id;
+                  return (
+                    <div
+                      key={opt.id}
+                      onClick={() => setProfileForm({
+                        ...profileForm,
+                        difficulty_level: opt.id,
+                        starting_capital_eur: opt.capital
+                      })}
+                      className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                        selected
+                          ? 'bg-cyan-950/40 border-cyan-400 ring-1 ring-cyan-400 shadow-lg'
+                          : 'bg-slate-900/60 border-slate-800 hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <span className={`font-bold text-xs ${selected ? 'text-cyan-300' : 'text-white'}`}>{opt.label}</span>
+                      </div>
+                      <div className="text-base font-black text-emerald-400 mt-1">{formatEuro(opt.capital)}</div>
+                      <p className="text-[11px] text-slate-400 font-sans mt-1 leading-snug">{opt.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+              <div>
+                <label className="text-slate-300 block mb-1.5 font-semibold">SimBrief Pilot ID / Username (Opzionale)</label>
+                <input
+                  type="text"
+                  value={profileForm.simbrief_id}
+                  onChange={(e) => setProfileForm({ ...profileForm, simbrief_id: e.target.value })}
+                  placeholder="es. 1106351"
+                  className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 block mb-1.5 font-semibold">Cartella Installazione X-Plane 12</label>
+                <input
+                  type="text"
+                  value={profileForm.xp12_install_path}
+                  onChange={(e) => setProfileForm({ ...profileForm, xp12_install_path: e.target.value })}
+                  placeholder="/percorso/a/X-Plane 12"
+                  className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400"
+                />
+                {systemStatus.xp12_detected_path && (
+                  <span className="text-[10px] text-emerald-400 mt-1 block">✓ X-Plane 12 rilevato automaticamente nel sistema</span>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-slate-800 flex justify-end">
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full md:w-auto flex items-center justify-center gap-2.5 bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white font-bold text-sm px-6 py-3 rounded-xl shadow-lg transition disabled:opacity-50"
+              >
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                Sincronizza il tuo X-Plane 12 & Crea Profilo
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-aviation-dark flex flex-col font-sans">
       {/* Toast Notification */}
@@ -702,13 +1004,13 @@ export default function App() {
                 <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">XP12</span>
               </div>
               <p className="text-xs text-slate-400 font-mono">
-                {systemStatus?.company?.name || 'AeroSky Executive Ops'}
+                {systemStatus?.company?.name || 'AeroSky Executive Ops'} • Base: <span className="text-cyan-300 font-bold">{systemStatus?.company?.home_base_icao || 'LIRN'}</span>
               </p>
             </div>
           </div>
 
           {/* Quick Metrics Bar in € EURO */}
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
               <span className="text-emerald-400 font-bold text-base">€</span>
               <div>
@@ -756,8 +1058,17 @@ export default function App() {
                 : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
             }`}>
               <span className={`w-2 h-2 rounded-full ${xpConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-              {xpConnected ? 'XP12 CONNESSO (UDP 49000)' : 'XP12 DISCONNESSO'}
+              {xpConnected ? 'XP12 CONNESSO' : 'XP12 OFFLINE'}
             </div>
+
+            {/* Reset Profile Button */}
+            <button
+              onClick={handleResetProfile}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/80 border border-rose-800/60 text-rose-300 text-xs font-mono transition"
+              title="Cancella profilo aziendale e ricomincia da zero"
+            >
+              <Trash2 size={13} /> Reset Profilo
+            </button>
           </div>
         </div>
 
@@ -766,7 +1077,7 @@ export default function App() {
           {[
             { id: 'flight', label: 'Volo Attivo & HUD', icon: Gauge },
             { id: 'fleet', label: 'Hangar (Proprietà)', icon: Plane },
-            { id: 'rental', label: 'Mercato Noleggio', icon: Key },
+            { id: 'rental', label: 'Mercato & Noleggio', icon: Key },
             { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
             { id: 'simbrief', label: 'SimBrief Dispatch', icon: Radio },
             { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
@@ -810,10 +1121,28 @@ export default function App() {
                   }`}>
                     FASE: {flightPhase}
                   </span>
-                  {selectedAircraft && (
-                    <span className="text-sm font-semibold text-white">
-                      {selectedAircraft.tail_number} ({selectedAircraft.name})
-                    </span>
+                  {fleet.length > 0 ? (
+                    <select
+                      value={selectedAircraft?.id || ''}
+                      onChange={(e) => {
+                        const ac = fleet.find(a => a.id === parseInt(e.target.value));
+                        if (ac) setSelectedAircraft(ac);
+                      }}
+                      className="bg-slate-900 border border-slate-700 text-white font-mono text-xs font-bold px-3 py-1 rounded-lg focus:outline-none focus:border-cyan-500"
+                    >
+                      {fleet.map((ac) => (
+                        <option key={ac.id} value={ac.id}>
+                          {ac.tail_number} ({ac.name}) {ac.ownership === 'LEASED' ? '[NOLEGGIO]' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <button
+                      onClick={() => setActiveTab('rental')}
+                      className="text-xs font-mono text-cyan-300 hover:underline flex items-center gap-1"
+                    >
+                      <Key size={13} /> Nessun aereo in flotta — Vai a Mercato & Noleggio
+                    </button>
                   )}
                 </div>
                 <p className="text-xs text-slate-400 mt-1 font-mono">
@@ -1027,9 +1356,15 @@ export default function App() {
                             {selectedAircraft.category}
                           </span>
                         </div>
-                        <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          DI PROPRIETÀ
-                        </span>
+                        {selectedAircraft.remaining_payments_weeks > 0 ? (
+                          <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            {selectedAircraft.acquisition_mode === 'FINANCIAL_LEASE' ? 'LEASING FINANZIARIO' : 'MUTUO BANCARIO'} • {formatEuro(selectedAircraft.weekly_payment_eur)}/sett ({selectedAircraft.remaining_payments_weeks} sett.)
+                          </span>
+                        ) : (
+                          <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            DI PROPRIETÀ (CASH)
+                          </span>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 font-mono text-xs">
@@ -1209,14 +1544,22 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="text-center py-16 glass-panel rounded-xl border border-dashed border-slate-800">
-                <p className="text-slate-400 font-mono text-sm">Nessun aereo di proprietà selezionato o presente nell hangar.</p>
-                <button
-                  onClick={() => setShowAddModal(true)}
-                  className="mt-3 text-cyan-400 hover:underline font-mono text-xs flex items-center gap-1 mx-auto"
-                >
-                  <Plus size={14} /> Clicca qui per aggiungere un aereo di proprietà
-                </button>
+              <div className="text-center py-16 glass-panel rounded-xl border border-dashed border-slate-800 space-y-4">
+                <p className="text-slate-400 font-mono text-sm">Nessun aereo di proprietà selezionato o presente nell'hangar.</p>
+                <div className="flex flex-wrap justify-center gap-3">
+                  <button
+                    onClick={() => setActiveTab('rental')}
+                    className="bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-bold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 transition"
+                  >
+                    <Key size={14} /> Vai al Mercato & Noleggio (XP12)
+                  </button>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-mono text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 transition"
+                  >
+                    <Plus size={14} /> Inserisci Manualmente
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1601,164 +1944,441 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: RENTAL MARKET (NOLEGGIO) */}
-        {activeTab === 'rental' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-white">Mercato del Noleggio & Charter (Lease Market)</h2>
-                <p className="text-xs text-slate-400 font-mono">
-                  Hai voglia di volare con un aereo diverso senza doverlo acquistare? Noleggialo on-demand pagando solo le ore di volo effettive.
-                </p>
-              </div>
-            </div>
+        {/* TAB 3: MERCATO & NOLEGGIO (FLOTTA SINCRONIZZATA DA X-PLANE 12) */}
+        {activeTab === 'rental' && (() => {
+          const categoriesMeta = [
+            { id: 'GA', label: 'GA — General Aviation & Turboprop', color: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10' },
+            { id: 'BIZJET', label: 'BIZJET — Business & Executive Jet', color: 'text-amber-300 border-amber-500/40 bg-amber-500/10' },
+            { id: 'AIRLINER', label: 'AIRLINER — Aerei di Linea Commerciali', color: 'text-cyan-300 border-cyan-500/40 bg-cyan-500/10' }
+          ];
 
-            {/* Currently Rented Aircraft in Fleet */}
-            {fleet.filter(ac => ac.ownership === 'LEASED').length > 0 && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-amber-300 font-mono uppercase">I Tuoi Noleggi Attivi</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {fleet.filter(ac => ac.ownership === 'LEASED').map((ac) => {
-                    const isSelected = selectedAircraft?.id === ac.id;
-                    return (
-                      <div key={ac.id} className={`glass-panel p-4 rounded-xl border ${isSelected ? 'border-amber-500 ring-1 ring-amber-500' : 'border-amber-900/40 bg-amber-950/10'}`}>
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-base font-black font-mono text-amber-400">{ac.tail_number}</span>
-                              <span className="text-xs px-2 py-0.5 rounded font-mono bg-amber-500/20 text-amber-300">
-                                {formatEuro(ac.hourly_lease_rate)} / ora
-                              </span>
+          const catFiltered = marketCategoryFilter === 'ALL'
+            ? marketAircraft
+            : marketAircraft.filter(m => m.category === marketCategoryFilter);
+
+          const availableManufs = [...new Set(catFiltered.map(m => m.manufacturer))].sort();
+          const finalFiltered = marketManufFilter === 'ALL'
+            ? catFiltered
+            : catFiltered.filter(m => m.manufacturer === marketManufFilter);
+
+          const activeCatOrder = marketCategoryFilter === 'ALL' ? ['GA', 'BIZJET', 'AIRLINER'] : [marketCategoryFilter];
+
+          return (
+            <div className="space-y-6">
+              {/* Top Header & Sync Button */}
+              <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Key size={20} className="text-cyan-400" /> Mercato & Noleggio (Catalogo X-Plane 12)
+                  </h2>
+                  <p className="text-xs text-slate-400 font-mono mt-0.5">
+                    Tutti gli aeromobili presenti nel tuo X-Plane 12, suddivisi per Macro Categoria, Costruttore e Modello.
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleSyncXP12}
+                  disabled={loading}
+                  className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-bold text-xs px-4 py-2.5 rounded-lg shadow transition disabled:opacity-50"
+                >
+                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Ri-sincronizza Aerei da X-Plane 12
+                </button>
+              </div>
+
+              {/* Currently Rented Aircraft in Fleet */}
+              {fleet.filter(ac => ac.ownership === 'LEASED').length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-bold text-amber-300 font-mono uppercase">I Tuoi Aerei a Noleggio Attivi</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {fleet.filter(ac => ac.ownership === 'LEASED').map((ac) => {
+                      const isSelected = selectedAircraft?.id === ac.id;
+                      return (
+                        <div key={ac.id} className={`glass-panel p-4 rounded-xl border ${isSelected ? 'border-amber-500 ring-1 ring-amber-500' : 'border-amber-900/40 bg-amber-950/10'}`}>
+                          <div className="flex justify-between items-start gap-3">
+                            <div className="flex items-center gap-3">
+                              {ac.image_url && (
+                                <img src={ac.image_url} alt={ac.name} className="w-16 h-12 object-cover rounded border border-slate-700 bg-slate-900" />
+                              )}
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-base font-black font-mono text-amber-400">{ac.tail_number}</span>
+                                  <span className="text-xs px-2 py-0.5 rounded font-mono bg-amber-500/20 text-amber-300">
+                                    {formatEuro(ac.hourly_lease_rate)} / ora
+                                  </span>
+                                </div>
+                                <h4 className="text-sm font-bold text-white mt-0.5">{ac.name}</h4>
+                                <p className="text-xs text-slate-400 font-mono">Stazionato a: <span className="text-white font-bold">{ac.current_icao}</span></p>
+                              </div>
                             </div>
-                            <h4 className="text-sm font-bold text-white mt-0.5">{ac.name}</h4>
-                            <p className="text-xs text-slate-400 font-mono">Stazionato a: <span className="text-white font-bold">{ac.current_icao}</span></p>
-                          </div>
-                          
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => setSelectedAircraft(ac)}
-                              className={`px-3 py-1.5 rounded text-xs font-mono font-bold ${isSelected ? 'bg-amber-400 text-black' : 'bg-slate-800 text-slate-200'}`}
-                            >
-                              {isSelected ? 'IN USO' : 'SELEZIONA'}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteAircraft(ac)}
-                              className="px-2.5 py-1.5 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-mono"
-                              title="Restituisci noleggio"
-                            >
-                              Riconsegna
-                            </button>
+                            
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setSelectedAircraft(ac)}
+                                className={`px-3 py-1.5 rounded text-xs font-mono font-bold ${isSelected ? 'bg-amber-400 text-black' : 'bg-slate-800 text-slate-200'}`}
+                              >
+                                {isSelected ? 'IN USO' : 'SELEZIONA'}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteAircraft(ac)}
+                                className="px-2.5 py-1.5 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-mono"
+                                title="Restituisci noleggio"
+                              >
+                                Riconsegna
+                              </button>
+                            </div>
                           </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Macro Category Filter Tabs */}
+              <div className="space-y-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                  <span className="text-slate-400 font-semibold mr-1">Macro Categoria:</span>
+                  <button
+                    onClick={() => { setMarketCategoryFilter('ALL'); setMarketManufFilter('ALL'); }}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition ${
+                      marketCategoryFilter === 'ALL'
+                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
+                        : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    TUTTE ({marketAircraft.length})
+                  </button>
+                  {categoriesMeta.map((c) => {
+                    const cnt = marketAircraft.filter(m => m.category === c.id).length;
+                    const active = marketCategoryFilter === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => { setMarketCategoryFilter(c.id); setMarketManufFilter('ALL'); }}
+                        className={`px-3 py-1.5 rounded-lg font-bold transition ${
+                          active
+                            ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/50'
+                            : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {c.id} ({cnt})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Manufacturer Sub-Filter */}
+                {availableManufs.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono pt-2 border-t border-slate-800/80">
+                    <span className="text-slate-400 mr-1">Costruttore (Manufacturer):</span>
+                    <button
+                      onClick={() => setMarketManufFilter('ALL')}
+                      className={`px-2.5 py-1 rounded transition ${
+                        marketManufFilter === 'ALL' ? 'bg-slate-700 text-white font-bold' : 'bg-slate-900 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Tutti
+                    </button>
+                    {availableManufs.map((man) => (
+                      <button
+                        key={man}
+                        onClick={() => setMarketManufFilter(man)}
+                        className={`px-2.5 py-1 rounded transition ${
+                          marketManufFilter === man ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 font-bold' : 'bg-slate-900 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {man}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Hierarchical Display: Macro Category -> Manufacturer -> Models */}
+              {finalFiltered.length === 0 ? (
+                <div className="glass-panel p-10 rounded-xl border border-slate-800 text-center space-y-3">
+                  <Plane size={36} className="mx-auto text-slate-600" />
+                  <div className="text-slate-300 font-bold">Nessun aeromobile nel Mercato per i filtri selezionati.</div>
+                  <p className="text-xs text-slate-400 font-mono">
+                    Premi "Ri-sincronizza Aerei da X-Plane 12" in alto per leggere la tua cartella Aircraft.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {activeCatOrder.map((catCode) => {
+                    const catMeta = categoriesMeta.find(c => c.id === catCode);
+                    const itemsInCat = finalFiltered.filter(m => m.category === catCode);
+                    if (itemsInCat.length === 0) return null;
+
+                    const manufsInCat = [...new Set(itemsInCat.map(m => m.manufacturer))].sort();
+
+                    return (
+                      <div key={catCode} className="space-y-5">
+                        {/* Macro Category Banner */}
+                        <div className={`px-4 py-2.5 rounded-xl border flex items-center justify-between ${catMeta.color}`}>
+                          <span className="font-black font-mono text-sm tracking-wide">{catMeta.label}</span>
+                          <span className="text-xs font-mono font-bold">{itemsInCat.length} modelli disponibili</span>
+                        </div>
+
+                        {/* Grouped by Manufacturer */}
+                        {manufsInCat.map((manuf) => {
+                          const models = itemsInCat.filter(m => m.manufacturer === manuf);
+                          return (
+                            <div key={manuf} className="space-y-3 pl-1">
+                              <div className="flex items-center gap-2 border-b border-slate-800 pb-1.5">
+                                <span className="text-sm font-bold text-white font-mono uppercase tracking-wider">{manuf}</span>
+                                <span className="text-[11px] font-mono text-slate-500">({models.length})</span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                                {models.map((item) => (
+                                  <div key={item.id} className="glass-panel rounded-xl border border-slate-800 hover:border-cyan-500/50 transition overflow-hidden flex flex-col justify-between">
+                                    <div>
+                                      {/* XP12 Aircraft Preview Image */}
+                                      <div className="h-36 bg-slate-950 relative border-b border-slate-800 flex items-center justify-center overflow-hidden">
+                                        {item.image_url ? (
+                                          <img src={item.image_url} alt={item.name} className="w-full h-full object-contain p-2 bg-gradient-to-b from-slate-900 to-slate-950" />
+                                        ) : (
+                                          <Plane size={42} className="text-slate-700" />
+                                        )}
+                                        <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[11px] font-mono font-bold text-cyan-300">
+                                          {item.aircraft_type}
+                                        </span>
+                                        <span className="absolute top-2 right-2 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[10px] font-mono text-slate-300">
+                                          Anno {item.year_manufactured} • {item.airframe_hours}h
+                                        </span>
+                                        <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/40 text-[10px] font-mono font-bold text-emerald-300">
+                                          Stato: {item.condition_pct}%
+                                        </span>
+                                      </div>
+
+                                      <div className="p-4 space-y-2.5">
+                                        <div>
+                                          <h4 className="text-sm font-bold text-white leading-snug">{item.name}</h4>
+                                          {item.studio && (
+                                            <div className="text-[10px] font-mono text-slate-500">Studio: {item.studio}</div>
+                                          )}
+                                        </div>
+
+                                        <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-2">{item.description}</p>
+
+                                        <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono text-slate-400 bg-slate-900/60 p-2 rounded border border-slate-800/80">
+                                          <div>Crociera: <span className="text-white font-semibold">{item.cruise_speed_kts} kts</span></div>
+                                          <div>Serbatoio: <span className="text-purple-300 font-semibold">{item.fuel_capacity_kg} kg</span></div>
+                                          <div className="col-span-2 truncate" title={item.engine_type}>
+                                            Motore: <span className="text-slate-200">{item.engine_type}</span>
+                                          </div>
+                                        </div>
+
+                                        {/* Transparent Pricing Box */}
+                                        <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 space-y-1 font-mono text-xs">
+                                          <div className="flex justify-between items-center">
+                                            <span className="text-slate-400">Acquisto Cash:</span>
+                                            <span className="font-bold text-white">{formatEuro(item.purchase_price_eur)}</span>
+                                          </div>
+                                          <div className="flex justify-between items-center">
+                                            <span className="text-slate-400">Anticipo Mutuo (10%):</span>
+                                            <span className="text-cyan-300 font-semibold">{formatEuro(item.financing_options?.bank_loan?.down_payment_eur)}</span>
+                                          </div>
+                                          <div className="flex justify-between items-center border-t border-slate-800 pt-1">
+                                            <span className="text-slate-400">Noleggio Orario:</span>
+                                            <span className="font-bold text-emerald-400">{formatEuro(item.hourly_lease_rate_eur)} / ora</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="px-4 pb-4">
+                                      <button
+                                        onClick={() => {
+                                          setSelectedMarketItem(item);
+                                          setAcquireTail(item.default_tail || `I-${item.aircraft_type.slice(0, 3)}`);
+                                          setAcquireIcao(systemStatus?.company?.home_base_icao || 'LIRN');
+                                          setAcquireMode((systemStatus?.company?.cash_balance || 0) >= item.purchase_price_eur ? 'OWNED_CASH' : 'RENTAL_HOURLY');
+                                          setShowAcquireModal(true);
+                                        }}
+                                        className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-mono font-bold text-xs py-2.5 rounded-lg shadow transition flex items-center justify-center gap-2"
+                                      >
+                                        <Key size={14} /> Acquista / Finanzia / Noleggia
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Rental Catalog */}
-            <h3 className="text-sm font-bold text-slate-300 font-mono uppercase mt-6">Catalogo Flotta a Noleggio Disponibile</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {rentalCatalog.map((item) => (
-                <div key={item.id} className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-col justify-between hover:border-cyan-500/40 transition">
-                  <div>
-                    <div className="flex justify-between items-start">
-                      <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-cyan-300">
-                        {item.category}
-                      </span>
-                      <div className="text-right">
-                        <div className="text-base font-bold font-mono text-emerald-400">{formatEuro(item.hourly_rate_eur)}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">all ora di volo</div>
+              {/* ACQUISITION MODAL (4 REAL-WORLD MODES) */}
+              {showAcquireModal && selectedMarketItem && (() => {
+                const cash = systemStatus?.company?.cash_balance || 0;
+                const opts = selectedMarketItem.financing_options;
+                const modes = [
+                  {
+                    id: 'RENTAL_HOURLY',
+                    title: 'Noleggio Orario (Dry Lease)',
+                    badge: 'Zero Anticipo',
+                    down: 0,
+                    weekly: 0,
+                    sub: `Tariffa volo: ${formatEuro(selectedMarketItem.hourly_lease_rate_eur)} / ora • Riconsegna libera quando vuoi`
+                  },
+                  {
+                    id: 'OWNED_CASH',
+                    title: 'Acquisto Immediato (Cash)',
+                    badge: '100% Proprietà',
+                    down: opts.cash.down_payment_eur,
+                    weekly: 0,
+                    sub: 'Proprietà immediata e totale • Nessuna rata settimanale'
+                  },
+                  {
+                    id: 'FINANCIAL_LEASE',
+                    title: 'Leasing Finanziario (52 Settimane)',
+                    badge: 'Anticipo 20%',
+                    down: opts.financial_lease.down_payment_eur,
+                    weekly: opts.financial_lease.weekly_eur,
+                    sub: `52 rate da ${formatEuro(opts.financial_lease.weekly_eur)}/sett • Riscatto finale automatico`
+                  },
+                  {
+                    id: 'FINANCED_LOAN',
+                    title: 'Mutuo Bancario (104 Settimane)',
+                    badge: 'Anticipo 10%',
+                    down: opts.bank_loan.down_payment_eur,
+                    weekly: opts.bank_loan.weekly_eur,
+                    sub: `104 rate da ${formatEuro(opts.bank_loan.weekly_eur)}/sett • Rate minime per massima liquidità`
+                  }
+                ];
+                const currentModeObj = modes.find(m => m.id === acquireMode) || modes[0];
+                const hasEnoughCash = cash >= currentModeObj.down;
+
+                return (
+                  <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-2xl w-full space-y-5 my-8">
+                      <div className="flex justify-between items-start border-b border-slate-800 pb-3">
+                        <div className="flex items-center gap-3">
+                          {selectedMarketItem.image_url && (
+                            <img src={selectedMarketItem.image_url} alt={selectedMarketItem.name} className="w-16 h-12 object-contain rounded bg-slate-900 border border-slate-700" />
+                          )}
+                          <div>
+                            <h3 className="text-base font-bold text-white">{selectedMarketItem.name}</h3>
+                            <p className="text-xs font-mono text-slate-400">
+                              {selectedMarketItem.manufacturer} • {selectedMarketItem.aircraft_type} • Prezzo listino: {formatEuro(selectedMarketItem.purchase_price_eur)}
+                            </p>
+                          </div>
+                        </div>
+                        <button onClick={() => setShowAcquireModal(false)} className="text-slate-400 hover:text-white text-lg">✕</button>
+                      </div>
+
+                      {/* Tail & Base */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 font-mono text-xs">
+                        <div>
+                          <label className="text-slate-400 block mb-1">Marche Immatricolazione (Tail Number)</label>
+                          <input
+                            type="text"
+                            value={acquireTail}
+                            onChange={(e) => setAcquireTail(e.target.value.toUpperCase())}
+                            className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-cyan-300 font-bold focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-slate-400 block mb-1">Aeroporto di Consegna / Ritiro (ICAO)</label>
+                          <input
+                            type="text"
+                            maxLength={4}
+                            value={acquireIcao}
+                            onChange={(e) => setAcquireIcao(e.target.value.toUpperCase())}
+                            className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white font-bold focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4 Acquisition Mode Selector Cards */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-mono text-slate-300 font-bold block">Scegli la Formula di Acquisizione:</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                          {modes.map((m) => {
+                            const selected = acquireMode === m.id;
+                            const affordable = cash >= m.down;
+                            return (
+                              <div
+                                key={m.id}
+                                onClick={() => setAcquireMode(m.id)}
+                                className={`p-3 rounded-xl border cursor-pointer transition ${
+                                  selected
+                                    ? 'bg-cyan-950/40 border-cyan-400 ring-1 ring-cyan-400'
+                                    : 'bg-slate-900/70 border-slate-800 hover:border-slate-600'
+                                } ${!affordable ? 'opacity-70' : ''}`}
+                              >
+                                <div className="flex justify-between items-start gap-2">
+                                  <span className={`font-bold ${selected ? 'text-cyan-300' : 'text-white'}`}>{m.title}</span>
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 whitespace-nowrap">{m.badge}</span>
+                                </div>
+                                <div className="mt-1.5 flex justify-between items-baseline">
+                                  <span className="text-slate-400">Oggi:</span>
+                                  <span className={`font-bold text-sm ${affordable ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {formatEuro(m.down)}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 font-sans mt-1 leading-snug">{m.sub}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Financial Summary Banner */}
+                      <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 font-mono text-xs space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Capitale Attuale Disponibile:</span>
+                          <span className="font-bold text-white">{formatEuro(cash)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Esborso Immediato Richiesto:</span>
+                          <span className={`font-bold ${hasEnoughCash ? 'text-amber-300' : 'text-rose-400'}`}>
+                            -{formatEuro(currentModeObj.down)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between border-t border-slate-800 pt-1">
+                          <span className="text-slate-400">Saldo Cassa Dopo Operazione:</span>
+                          <span className={`font-bold ${hasEnoughCash ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {formatEuro(cash - currentModeObj.down)}
+                          </span>
+                        </div>
+                        {!hasEnoughCash && (
+                          <div className="text-[11px] text-rose-400 font-sans pt-1">
+                            ⚠️ Fondi liquidi insufficienti per questa formula. Seleziona il Mutuo Bancario, il Leasing o il Noleggio Orario.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex justify-end gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAcquireModal(false)}
+                          className="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-mono"
+                        >
+                          Annulla
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAcquireAircraft}
+                          disabled={loading || !hasEnoughCash}
+                          className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono disabled:opacity-40 transition"
+                        >
+                          Conferma Operazione
+                        </button>
                       </div>
                     </div>
-
-                    <h4 className="text-base font-bold text-white mt-2">{item.name}</h4>
-                    <p className="text-xs text-slate-400 font-mono mt-2 leading-relaxed">{item.description}</p>
-
-                    <div className="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/80 font-mono text-xs text-slate-400">
-                      <div>Velocità Crociera: <span className="text-white">{item.cruising_speed_kts} kts</span></div>
-                      <div>Autonomia: <span className="text-white">{item.range_nm} NM</span></div>
-                      <div className="col-span-2">Serbatoio Max: <span className="text-purple-300">{item.fuel_capacity_kg} kg</span></div>
-                    </div>
                   </div>
-
-                  <button
-                    onClick={() => {
-                      setSelectedRentalTemplate(item);
-                      setRentCustomTail(`I-RNT${Math.floor(10 + Math.random() * 89)}`);
-                      setRentPickupIcao(selectedAircraft?.current_icao || 'LIRN');
-                      setShowRentModal(true);
-                    }}
-                    className="mt-5 w-full bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-semibold text-xs py-2 rounded-lg transition flex items-center justify-center gap-2"
-                  >
-                    <Key size={14} /> Noleggia per questo Volo
-                  </button>
-                </div>
-              ))}
+                );
+              })()}
             </div>
-
-            {/* Rent Confirmation Modal */}
-            {showRentModal && selectedRentalTemplate && (
-              <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-md w-full space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                    <h3 className="text-base font-bold text-white flex items-center gap-2">
-                      <Key size={18} className="text-cyan-400" /> Noleggia {selectedRentalTemplate.name}
-                    </h3>
-                    <button onClick={() => setShowRentModal(false)} className="text-slate-400 hover:text-white">✕</button>
-                  </div>
-
-                  <div className="space-y-3 font-mono text-xs">
-                    <div className="bg-slate-900/80 p-3 rounded border border-slate-800">
-                      <div className="text-slate-400">Tariffa Noleggio Orario (Dry Lease):</div>
-                      <div className="text-lg font-bold text-emerald-400">{formatEuro(selectedRentalTemplate.hourly_rate_eur)} / ora di volo</div>
-                      <div className="text-[10px] text-slate-500 mt-1">L importo verrà addebitato proporzionalmente alla durata effettiva dei voli effettuati.</div>
-                    </div>
-
-                    <div>
-                      <label className="text-slate-400 block mb-1">Marche Personalizzate (facoltativo)</label>
-                      <input
-                        type="text"
-                        value={rentCustomTail}
-                        onChange={(e) => setRentCustomTail(e.target.value.toUpperCase())}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-slate-400 block mb-1">Aeroporto di Ritiro (ICAO)</label>
-                      <input
-                        type="text"
-                        value={rentPickupIcao}
-                        onChange={(e) => setRentPickupIcao(e.target.value.toUpperCase())}
-                        className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-cyan-500"
-                      />
-                    </div>
-
-                    <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
-                      <button
-                        type="button"
-                        onClick={() => setShowRentModal(false)}
-                        className="px-4 py-2 rounded bg-slate-800 text-slate-300 hover:bg-slate-700"
-                      >
-                        Annulla
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleRentAircraft}
-                        disabled={loading}
-                        className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
-                      >
-                        Conferma Noleggio
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+          );
+        })()}
 
         {/* TAB 4: JOBS & CONTRACTS */}
         {activeTab === 'jobs' && (
@@ -2195,14 +2815,18 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80">
+                  <div className="grid grid-cols-3 gap-2 text-[11px] font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80">
                     <div>
-                      <span className="text-slate-400">Hangar Flotta:</span>{' '}
+                      <span className="text-slate-400 block">Hangar:</span>
                       <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_hangar_eur || 0)}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400">Polizze Kasko/RC:</span>{' '}
+                      <span className="text-slate-400 block">Assicurazioni:</span>
                       <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_insurance_eur || 0)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Rate/Leasing:</span>
+                      <span className="text-amber-300 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_financing_eur || 0)}</span>
                     </div>
                   </div>
 
@@ -2463,6 +3087,12 @@ export default function App() {
                             <span>Polizze Assicurative Flotta (Corpi & RC)</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.insurance_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Rate Leasing Finanziario & Mutui</span>
+                            <span className="text-amber-300">
+                              {formatEuro(financialOverview?.income_statement?.fixed_overheads?.financing_eur ?? 0)}
                             </span>
                           </div>
                         </div>

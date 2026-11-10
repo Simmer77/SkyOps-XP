@@ -26,6 +26,12 @@ async def init_db():
             ("next_annual_inspection", "DATETIME"),
             ("next_50h_inspection_hours", "FLOAT DEFAULT 50.0"),
             ("next_100h_inspection_hours", "FLOAT DEFAULT 100.0"),
+            ("manufacturer", "TEXT DEFAULT ''"),
+            ("mtow_kg", "FLOAT DEFAULT 2700.0"),
+            ("acquisition_mode", "TEXT DEFAULT 'OWNED_CASH'"),
+            ("weekly_payment_eur", "FLOAT DEFAULT 0.0"),
+            ("remaining_payments_weeks", "INTEGER DEFAULT 0"),
+            ("financed_amount_remaining_eur", "FLOAT DEFAULT 0.0"),
         ]
         for col_name, col_type in new_cols:
             try:
@@ -33,7 +39,15 @@ async def init_db():
             except Exception:
                 pass # Column already exists
                 
-        try:
-            await conn.execute(text("ALTER TABLE company ADD COLUMN operating_day INTEGER DEFAULT 1"))
-        except Exception:
-            pass
+        company_cols = [
+            ("operating_day", "INTEGER DEFAULT 1"),
+            ("home_base_icao", "TEXT DEFAULT 'LIRN'"),
+            ("starting_capital_eur", "FLOAT DEFAULT 150000.0"),
+            ("difficulty_level", "TEXT DEFAULT 'STANDARD'"),
+            ("xp12_install_path", "TEXT DEFAULT ''"),
+        ]
+        for col_name, col_type in company_cols:
+            try:
+                await conn.execute(text(f"ALTER TABLE company ADD COLUMN {col_name} {col_type}"))
+            except Exception:
+                pass

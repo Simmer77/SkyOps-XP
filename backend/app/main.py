@@ -11,7 +11,7 @@ from app.models.schema import Company, Aircraft
 from app.services.xp_connector import xp_connector
 from app.services.flight_tracker import flight_tracker
 from app.services.maintenance import MaintenanceService
-from app.api import fleet, jobs, simbrief, flights, system, finances
+from app.api import fleet, jobs, simbrief, flights, system, finances, company
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("SkyOps.Main")
@@ -195,7 +195,6 @@ async def seed_initial_data():
 async def lifespan(app: FastAPI):
     # Startup
     await init_db()
-    await seed_initial_data()
     loop_task = asyncio.create_task(xp_telemetry_loop())
     background_tasks.add(loop_task)
     yield
@@ -224,6 +223,7 @@ app.include_router(jobs.router, prefix="/api")
 app.include_router(simbrief.router, prefix="/api")
 app.include_router(flights.router, prefix="/api")
 app.include_router(finances.router, prefix="/api")
+app.include_router(company.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 
 # Serve static uploaded images

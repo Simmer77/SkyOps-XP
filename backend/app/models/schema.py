@@ -8,12 +8,16 @@ class Company(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, default="SkyOps Aviation")
+    home_base_icao = Column(String, default="LIRN")
     cash_balance = Column(Float, default=150000.0)  # Starting capital
+    starting_capital_eur = Column(Float, default=150000.0)
+    difficulty_level = Column(String, default="STANDARD")
     reputation = Column(Float, default=100.0)  # 0 to 100%
     virtual_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     operating_day = Column(Integer, default=1)  # Virtual day counter (Day 1, 8, 15...)
     simbrief_username = Column(String, nullable=True, default="")
     simbrief_pilot_id = Column(String, nullable=True, default="")
+    xp12_install_path = Column(String, nullable=True, default="")
 
 class Aircraft(Base):
     __tablename__ = "aircraft"
@@ -59,9 +63,15 @@ class Aircraft(Base):
     health_airframe_pct = Column(Float, default=99.0)
     health_avionics_pct = Column(Float, default=100.0)
     
-    # Economic rates
+    # Economic rates & Financing
+    manufacturer = Column(String, default="")
+    mtow_kg = Column(Float, default=2700.0)
+    acquisition_mode = Column(String, default="OWNED_CASH") # "OWNED_CASH", "FINANCIAL_LEASE", "FINANCED_LOAN", "RENTAL_HOURLY"
+    weekly_payment_eur = Column(Float, default=0.0)
+    remaining_payments_weeks = Column(Integer, default=0)
+    financed_amount_remaining_eur = Column(Float, default=0.0)
     hourly_lease_rate = Column(Float, default=0.0)
-    hourly_maintenance_reserve = Column(Float, default=120.0) # $ / hour reserve
+    hourly_maintenance_reserve = Column(Float, default=120.0) # € / hour reserve
     
     is_in_flight = Column(Boolean, default=False)
     
@@ -156,3 +166,33 @@ class FinancialTransaction(Base):
     balance_after_eur = Column(Float) # running balance
     related_aircraft_tail = Column(String, nullable=True)
     related_flight_id = Column(Integer, nullable=True)
+
+class MarketAircraft(Base):
+    __tablename__ = "market_aircraft"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    acf_path = Column(String, unique=True)
+    name = Column(String)
+    aircraft_type = Column(String, index=True) # ICAO code e.g. SF50, E55P, A319
+    manufacturer = Column(String, index=True)  # e.g. Cirrus, Embraer, Airbus, Boeing
+    studio = Column(String, default="")        # e.g. Aerobask, ToLiss, Laminar Research
+    category = Column(String, index=True)      # "GA", "BIZJET", "AIRLINER"
+    
+    fuel_capacity_kg = Column(Float, default=900.0)
+    mtow_kg = Column(Float, default=2700.0)
+    cruise_speed_kts = Column(Float, default=250.0)
+    num_engines = Column(Integer, default=1)
+    engine_type = Column(String, default="Standard")
+    avionics_system = Column(String, default="Glass Cockpit")
+    
+    year_manufactured = Column(Integer, default=2020)
+    airframe_hours = Column(Float, default=0.0)
+    condition_pct = Column(Float, default=100.0)
+    is_used = Column(Boolean, default=False)
+    
+    purchase_price_eur = Column(Float, default=500000.0)
+    hourly_lease_rate_eur = Column(Float, default=250.0)
+    
+    image_url = Column(String, nullable=True, default="")
+    default_tail = Column(String, default="I-SKYO")
+    description = Column(Text, nullable=True)
