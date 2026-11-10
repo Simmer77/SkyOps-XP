@@ -116,9 +116,14 @@ class FlightTracker:
         else:
             self.touchdown_rating = "STRUCTURAL_DAMAGE"
 
-    async def finalize_flight(self) -> Optional[Dict[str, Any]]:
+    async def finalize_flight(
+        self,
+        actual_arrival_icao: Optional[str] = None,
+        diversion_reason: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Finalizes active flight, saves records to DB, applies wear & finances.
+        Supports diversion / emergency arrival at an alternate airport.
         """
         if not self.active_aircraft_id:
             return None
@@ -134,6 +139,12 @@ class FlightTracker:
                 return None
                 
             job = await session.get(Job, self.active_job_id) if self.active_job_id else None
+            if not job:
+                # Fallback: check if there's an IN_PROGRESS or ACCEPTED job assigned to this aircraft
+                job_res = await session.execute(
+                    select(Job).where(Job.aircraft_id == aircraft.id, Job.status.in_(["IN_PROGRESS", "ACCEPTED"])).order_by(Job.id.desc())
+                )
+                job = job_res.scalars().first()
             
             comp_res = await session.execute(select(Company).limit(1))
             company = comp_res.scalars().first()
@@ -174,20 +185,25 @@ class FlightTracker:
             aircraft.fuel_quantity_kg = self.current_fuel_kg
             aircraft.is_in_flight = False
             
+            orig_icao = job.origin_icao if job else aircraft.current_icao
+            planned_dest = job.destination_icao if job else aircraft.current_icao
+            final_dest = actual_arrival_icao.strip().upper() if (actual_arrival_icao and actual_arrival_icao.strip()) else planned_dest
+            
+            diversion_note = None
+            if final_dest != planned_dest:
+                diversion_note = f"Dirottato / Emergenza verso {final_dest} (pianificato: {planned_dest}). {diversion_reason or ''}".strip()
+
+            aircraft.current_icao = final_dest
             if job:
-                aircraft.current_icao = job.destination_icao
                 job.status = "COMPLETED"
-                
-            # Update company balance
-            company.cash_balance += financials["net_profit"]
             
             # 4. Save FlightLog
             log = FlightLog(
                 flight_number=f"SO{aircraft.tail_number[-3:] if aircraft.tail_number else '100'}",
                 aircraft_id=aircraft.id,
                 job_id=job.id if job else None,
-                origin_icao=job.origin_icao if job else aircraft.current_icao,
-                destination_icao=job.destination_icao if job else aircraft.current_icao,
+                origin_icao=orig_icao,
+                destination_icao=final_dest,
                 start_time=self.start_time,
                 end_time=end_time,
                 flight_duration_min=round(duration_hours * 60, 1),
@@ -202,14 +218,15 @@ class FlightTracker:
                 landing_fee_usd=financials["landing_fee"],
                 lease_cost_usd=financials["lease_cost"],
                 net_profit_usd=financials["net_profit"],
+                notes=diversion_note,
                 status="COMPLETED"
             )
             session.add(log)
             await session.flush()
 
-            # 5. Record granular transactions in Financial Ledger
-            dest = job.destination_icao if job else aircraft.current_icao
-            orig = job.origin_icao if job else aircraft.current_icao
+            # 5. Record granular transactions in Financial Ledger (updates company.cash_balance atomically)
+            dest = final_dest
+            orig = orig_icao
             route_str = f"{orig} ➔ {dest}"
 
             if financials["gross_revenue"] > 0:

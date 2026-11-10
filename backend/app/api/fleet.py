@@ -591,7 +591,6 @@ async def refuel_aircraft(aircraft_id: int, req: RefuelRequest, db: AsyncSession
         if company and company.cash_balance < cost_eur:
             raise HTTPException(status_code=400, detail="Fondi insufficienti per il rifornimento.")
         if company:
-            company.cash_balance -= cost_eur
             await EconomyService.record_transaction(
                 session=db,
                 category="FUEL",
@@ -634,7 +633,6 @@ async def perform_service(aircraft_id: int, req: ServiceRequest, db: AsyncSessio
         raise HTTPException(status_code=400, detail="Fondi societari insufficienti per questo intervento.")
         
     if company:
-        company.cash_balance -= cost_eur
         await EconomyService.record_transaction(
             session=db,
             category="MAINTENANCE",

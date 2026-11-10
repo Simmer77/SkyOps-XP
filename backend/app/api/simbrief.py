@@ -14,6 +14,13 @@ class ImportOFPRequest(BaseModel):
     username: Optional[str] = None
     pilot_id: Optional[str] = None
     aircraft_id: int
+    is_commercial: bool = True
+
+def calculate_simbrief_reward(dist_nm: float, pax_count: int, cargo_kg: float, category: str = "GA") -> float:
+    rates = {"GA": 18.0, "BIZJET": 26.0, "AIRLINER": 38.0}
+    rate = rates.get((category or "GA").upper(), 22.0)
+    raw = (dist_nm * rate) + (pax_count * 120.0) + (cargo_kg * 1.5)
+    return float(round(max(650.0, raw), 0))
 
 @router.get("/latest")
 async def get_latest_ofp(
@@ -50,12 +57,19 @@ async def get_latest_ofp(
             company.simbrief_pilot_id = ofp["user_id"]
         await db.commit()
         
+    # Attach estimated commercial reward
+    ofp["estimated_reward_eur"] = calculate_simbrief_reward(
+        ofp.get("distance_nm", 0.0),
+        ofp.get("pax_count", 0),
+        ofp.get("cargo_kg", 0.0)
+    )
     return ofp
 
 @router.post("/import_flight")
 async def import_simbrief_flight(req: ImportOFPRequest, db: AsyncSession = Depends(get_db)):
     """
-    Imports the latest OFP from SimBrief directly as an active contract for the selected aircraft.
+    Imports the latest OFP from SimBrief directly as an active flight plan/contract for the selected aircraft.
+    Supports both Commercial (default, generates revenue) and Personal/Ferry (no revenue, costs only).
     """
     ofp = await SimBriefService.fetch_latest_ofp(username=req.username, pilot_id=req.pilot_id)
     if not ofp:
@@ -64,23 +78,37 @@ async def import_simbrief_flight(req: ImportOFPRequest, db: AsyncSession = Depen
     aircraft = await db.get(Aircraft, req.aircraft_id)
     if not aircraft:
         raise HTTPException(status_code=404, detail="Aeromobile non trovato.")
-        
-    # Reward estimation based on distance, pax, and category
+
+    # Cancel any previous ACCEPTED/IN_PROGRESS jobs assigned to this aircraft to avoid conflicts
+    old_jobs = (await db.execute(
+        select(Job).where(Job.aircraft_id == aircraft.id, Job.status.in_(["ACCEPTED", "IN_PROGRESS"]))
+    )).scalars().all()
+    for oj in old_jobs:
+        oj.status = "CANCELLED"
+
+    # Calculate reward if commercial flight, or 0 for personal/ferry flight
     dist = ofp["distance_nm"]
-    reward = round(dist * 22.0 + (ofp["pax_count"] * 120.0) + (ofp["cargo_kg"] * 1.5), 0)
+    if req.is_commercial:
+        reward = calculate_simbrief_reward(dist, ofp["pax_count"], ofp["cargo_kg"], aircraft.category)
+        jtype = "PASSENGER" if ofp["pax_count"] > 0 else "CARGO"
+        title_prefix = f"SimBrief {ofp['flight_number']}"
+    else:
+        reward = 0.0
+        jtype = "PERSONAL"
+        title_prefix = f"Volo Personale/Ferry {ofp['flight_number']}"
     
     # Create Job directly
     job = Job(
-        title=f"SimBrief {ofp['flight_number']}: {ofp['origin_icao']} -> {ofp['destination_icao']}",
-        job_type="PASSENGER" if ofp["pax_count"] > 0 else "CARGO",
+        title=f"{title_prefix}: {ofp['origin_icao']} -> {ofp['destination_icao']}",
+        job_type=jtype,
         origin_icao=ofp["origin_icao"],
         destination_icao=ofp["destination_icao"],
         distance_nm=dist,
         pax_count=ofp["pax_count"],
         cargo_kg=ofp["cargo_kg"],
         required_category=aircraft.category,
-        reward_usd=max(500.0, reward),
-        penalty_usd=round(reward * 0.15, 0),
+        reward_usd=reward,
+        penalty_usd=round(reward * 0.15, 0) if reward > 0 else 0.0,
         status="ACCEPTED",
         aircraft_id=aircraft.id
     )

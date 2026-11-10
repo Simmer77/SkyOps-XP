@@ -69,6 +69,24 @@ export default function App() {
     xp12_install_path: ''
   });
 
+  // Dispatch (SimBrief + Manual) & Pre/Post Flight Checks State
+  const [dispatchMode, setDispatchMode] = useState('simbrief'); // 'simbrief' | 'manual'
+  const [planIsCommercial, setPlanIsCommercial] = useState(true); // Default: tutti i voli ad incasso
+  const [manualPlan, setManualPlan] = useState({
+    origin_icao: '',
+    destination_icao: '',
+    alternate_icao: '',
+    flight_number: '',
+    distance_nm: '',
+    pax_count: 2,
+    cargo_kg: 0,
+    route: ''
+  });
+  const [manualEstimate, setManualEstimate] = useState(null);
+  const [showDiversionPanel, setShowDiversionPanel] = useState(false);
+  const [actualArrivalIcao, setActualArrivalIcao] = useState('');
+  const [diversionReason, setDiversionReason] = useState('');
+
   // Modal State for legacy renting
   const [showRentModal, setShowRentModal] = useState(false);
   const [selectedRentalTemplate, setSelectedRentalTemplate] = useState(null);
@@ -197,9 +215,15 @@ export default function App() {
     }
   };
 
-  const fetchActiveFlight = async () => {
+  const fetchActiveFlight = async (acOverride = null, altOverride = null) => {
     try {
-      const res = await fetch('/api/flights/active');
+      const acId = acOverride ?? selectedAircraft?.id;
+      const alt = altOverride ?? (showDiversionPanel ? actualArrivalIcao : '');
+      const params = new URLSearchParams();
+      if (acId) params.set('aircraft_id', acId);
+      if (alt && alt.trim().length >= 3) params.set('alternate_icao', alt.trim());
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const res = await fetch(`/api/flights/active${qs}`);
       if (res.ok) {
         const data = await res.json();
         setActiveFlight(data);
@@ -415,12 +439,26 @@ export default function App() {
       fetchFinances();
     } else if (activeTab === 'rental') {
       fetchMarket();
+    } else if (activeTab === 'flight') {
+      fetchActiveFlight();
+    } else if (activeTab === 'simbrief' && selectedAircraft && !manualPlan.origin_icao) {
+      setManualPlan(prev => ({ ...prev, origin_icao: selectedAircraft.current_icao || '' }));
     }
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab !== 'flight') return;
+    const interval = setInterval(() => {
+      fetchActiveFlight();
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [activeTab, selectedAircraft, showDiversionPanel, actualArrivalIcao]);
+
+  useEffect(() => {
     if (selectedAircraft) {
       fetchJobs(selectedAircraft.current_icao);
+      fetchActiveFlight(selectedAircraft.id);
+      setManualPlan(prev => ({ ...prev, origin_icao: selectedAircraft.current_icao || prev.origin_icao }));
     }
   }, [selectedAircraft]);
 
@@ -737,24 +775,80 @@ export default function App() {
         body: JSON.stringify({
           username: isNumericId ? null : cleaned,
           pilot_id: isNumericId ? cleaned : null,
-          aircraft_id: selectedAircraft.id
+          aircraft_id: selectedAircraft.id,
+          is_commercial: planIsCommercial
         })
       });
       const data = await res.json();
       if (res.ok) {
-        showNotice(data.message, 'success');
-        fetchFleet();
-        fetchJobs(selectedAircraft.current_icao);
-        // Avvia automaticamente il volo monitorato con il contratto importato da SimBrief
-        if (data.job?.id) {
-          await handleStartFlight(data.job.id);
-        }
+        showNotice(`${data.message} Vai in Plancia per completare i controlli Pre-Volo.`, 'success');
+        await Promise.all([fetchFleet(), fetchActiveFlight(selectedAircraft.id)]);
         setActiveTab('flight');
       } else {
         showNotice(data.detail, 'error');
       }
     } catch (e) {
       showNotice('Errore importazione SimBrief', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchManualEstimate = async (orig, dest, pax, cargo, commercial) => {
+    if (!orig || orig.trim().length < 3 || !dest || dest.trim().length < 3) {
+      setManualEstimate(null);
+      return;
+    }
+    try {
+      const cat = selectedAircraft?.category || 'GA';
+      const res = await fetch(
+        `/api/jobs/estimate_route?origin=${encodeURIComponent(orig)}&destination=${encodeURIComponent(dest)}&category=${cat}&pax=${pax || 0}&cargo=${cargo || 0}&is_commercial=${commercial}`
+      );
+      if (res.ok) {
+        const d = await res.json();
+        setManualEstimate(d);
+      }
+    } catch (e) {}
+  };
+
+  const handleCreateManualPlan = async (e) => {
+    if (e) e.preventDefault();
+    if (!selectedAircraft) {
+      showNotice('Seleziona prima un aeromobile dalla flotta', 'error');
+      return;
+    }
+    if (!manualPlan.origin_icao.trim() || !manualPlan.destination_icao.trim()) {
+      showNotice('Inserisci i codici ICAO di Partenza e Destinazione.', 'error');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/jobs/plan_manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aircraft_id: selectedAircraft.id,
+          origin_icao: manualPlan.origin_icao.trim().toUpperCase(),
+          destination_icao: manualPlan.destination_icao.trim().toUpperCase(),
+          alternate_icao: manualPlan.alternate_icao.trim().toUpperCase(),
+          flight_number: manualPlan.flight_number.trim().toUpperCase(),
+          distance_nm: manualPlan.distance_nm ? parseFloat(manualPlan.distance_nm) : 0.0,
+          pax_count: parseInt(manualPlan.pax_count) || 0,
+          cargo_kg: parseFloat(manualPlan.cargo_kg) || 0.0,
+          route: manualPlan.route,
+          is_commercial: planIsCommercial
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        await Promise.all([fetchFleet(), fetchActiveFlight(selectedAircraft.id)]);
+        setActiveTab('flight');
+      } else {
+        showNotice(data.detail || 'Errore creazione piano manuale', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di rete nella creazione piano', 'error');
     } finally {
       setLoading(false);
     }
@@ -774,12 +868,12 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           aircraft_id: selectedAircraft.id,
-          job_id: jobId
+          job_id: jobId || activeFlight?.job?.id || null
         })
       });
       const data = await res.json();
       if (res.ok) {
-        showNotice(`Volo avviato per ${selectedAircraft.tail_number}!`, 'success');
+        showNotice(data.message || `Volo avviato per ${selectedAircraft.tail_number}!`, 'success');
         fetchActiveFlight();
       } else {
         showNotice(data.detail, 'error');
@@ -792,10 +886,23 @@ export default function App() {
   const handleFinalizeFlight = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/flights/finalize', { method: 'POST' });
+      const payload = (showDiversionPanel && actualArrivalIcao.trim())
+        ? {
+            actual_arrival_icao: actualArrivalIcao.trim().toUpperCase(),
+            diversion_reason: diversionReason.trim() || 'Dirottamento / Emergenza'
+          }
+        : {};
+      const res = await fetch('/api/flights/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
       const data = await res.json();
       if (res.ok) {
         showNotice(`Volo completato! Utile netto: ${formatEuro(data.summary.financials.net_profit)}`, 'success');
+        setShowDiversionPanel(false);
+        setActualArrivalIcao('');
+        setDiversionReason('');
         fetchStatus();
         fetchFleet();
         fetchActiveFlight();
@@ -1111,7 +1218,7 @@ export default function App() {
             { id: 'fleet', label: 'Hangar (Proprietà)', icon: Plane },
             { id: 'rental', label: 'Mercato & Noleggio', icon: Key },
             { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
-            { id: 'simbrief', label: 'SimBrief Dispatch', icon: Radio },
+            { id: 'simbrief', label: 'Piano di Volo & Dispatch', icon: Radio },
             { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
             { id: 'finances', label: 'Bilancio & Finanze', icon: TrendingUp },
             { id: 'logbook', label: 'Registro Voli', icon: BookOpen },
@@ -1182,64 +1289,203 @@ export default function App() {
             )}
 
             {/* Mission Overview Banner */}
-            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold uppercase ${
-                    flightPhase === 'ENROUTE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse' :
-                    flightPhase === 'TOUCHDOWN' || flightPhase === 'TAXI_IN' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
-                    'bg-slate-800 text-slate-300'
-                  }`}>
-                    FASE: {flightPhase}
-                  </span>
-                  {fleet.length > 0 ? (
-                    <select
-                      value={selectedAircraft?.id || ''}
-                      onChange={(e) => {
-                        const ac = fleet.find(a => a.id === parseInt(e.target.value));
-                        if (ac) setSelectedAircraft(ac);
-                      }}
-                      className="bg-slate-900 border border-slate-700 text-white font-mono text-xs font-bold px-3 py-1 rounded-lg focus:outline-none focus:border-cyan-500"
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded text-xs font-mono font-bold uppercase ${
+                      flightPhase === 'ENROUTE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse' :
+                      flightPhase === 'TOUCHDOWN' || flightPhase === 'TAXI_IN' || flightPhase === 'PARKED' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
+                      'bg-slate-800 text-slate-300'
+                    }`}>
+                      FASE: {flightPhase}
+                    </span>
+                    {fleet.length > 0 ? (
+                      <select
+                        value={selectedAircraft?.id || ''}
+                        onChange={(e) => {
+                          const ac = fleet.find(a => a.id === parseInt(e.target.value));
+                          if (ac) setSelectedAircraft(ac);
+                        }}
+                        className="bg-slate-900 border border-slate-700 text-white font-mono text-xs font-bold px-3 py-1 rounded-lg focus:outline-none focus:border-cyan-500"
+                      >
+                        {fleet.map((ac) => (
+                          <option key={ac.id} value={ac.id}>
+                            {ac.tail_number} ({ac.name}) {ac.ownership === 'LEASED' ? '[NOLEGGIO]' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <button
+                        onClick={() => setActiveTab('rental')}
+                        className="text-xs font-mono text-cyan-300 hover:underline flex items-center gap-1"
+                      >
+                        <Key size={13} /> Nessun aereo in flotta — Vai a Mercato & Noleggio
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1.5 font-mono">
+                    Posizione salvata: <strong className="text-white">{selectedAircraft?.current_icao || 'N/D'}</strong> | Carburante a bordo: {liveTelemetry.fuel_total_kg > 0 ? liveTelemetry.fuel_total_kg.toFixed(0) : selectedAircraft?.fuel_quantity_kg?.toFixed(0)} kg
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {flightPhase === 'OFFLINE' ? (
+                    <button
+                      onClick={() => handleStartFlight()}
+                      disabled={!selectedAircraft}
+                      className={`flex items-center gap-2 font-semibold px-4 py-2 rounded-lg shadow transition ${
+                        activeFlight?.flight_checks?.xp_connected && liveTelemetry.parking_brake >= 0.5 && liveTelemetry.on_ground > 0.5 && activeFlight?.flight_checks?.at_origin
+                          ? 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                      }`}
                     >
-                      {fleet.map((ac) => (
-                        <option key={ac.id} value={ac.id}>
-                          {ac.tail_number} ({ac.name}) {ac.ownership === 'LEASED' ? '[NOLEGGIO]' : ''}
-                        </option>
-                      ))}
-                    </select>
+                      <Zap size={16} /> Avvia Monitoraggio Volo
+                    </button>
                   ) : (
                     <button
-                      onClick={() => setActiveTab('rental')}
-                      className="text-xs font-mono text-cyan-300 hover:underline flex items-center gap-1"
+                      onClick={handleFinalizeFlight}
+                      disabled={loading}
+                      className={`flex items-center gap-2 font-semibold px-4 py-2 rounded-lg shadow transition ${
+                        liveTelemetry.parking_brake >= 0.5 && liveTelemetry.on_ground > 0.5 && activeFlight?.flight_checks?.at_destination
+                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
+                      }`}
                     >
-                      <Key size={13} /> Nessun aereo in flotta — Vai a Mercato & Noleggio
+                      <CheckCircle size={16} /> Concludi Volo & Registra Bilancio
                     </button>
                   )}
                 </div>
-                <p className="text-xs text-slate-400 mt-1 font-mono">
-                  Posizione attuale: {selectedAircraft?.current_icao} | Carburante a bordo: {liveTelemetry.fuel_total_kg > 0 ? liveTelemetry.fuel_total_kg.toFixed(0) : selectedAircraft?.fuel_quantity_kg?.toFixed(0)} kg
-                </p>
               </div>
 
-              <div className="flex items-center gap-3">
-                {flightPhase === 'OFFLINE' ? (
+              {/* Active Planned Mission / Contract Summary */}
+              {activeFlight?.job ? (
+                <div className="bg-slate-900/70 p-3.5 rounded-lg border border-cyan-500/30 flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                      activeFlight.job.reward_usd > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-700 text-slate-300'
+                    }`}>
+                      {activeFlight.job.reward_usd > 0 ? 'COMMERCIALE' : 'PERSONALE / FERRY'}
+                    </span>
+                    <div>
+                      <span className="font-bold text-white text-sm">{activeFlight.job.origin_icao} ➔ {activeFlight.job.destination_icao}</span>
+                      <span className="text-slate-400 ml-2">({activeFlight.job.distance_nm} NM • {activeFlight.job.pax_count} pax • {activeFlight.job.cargo_kg} kg cargo)</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-slate-400">Ricavo Previsto: </span>
+                    <span className={`font-bold text-sm ${activeFlight.job.reward_usd > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                      {activeFlight.job.reward_usd > 0 ? formatEuro(activeFlight.job.reward_usd) : '€ 0,00 (Solo Costi)'}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-900/50 p-3 rounded-lg border border-dashed border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                  <span className="text-slate-400">Nessun piano di volo attivo assegnato a {selectedAircraft?.tail_number}.</span>
                   <button
-                    onClick={() => handleStartFlight()}
-                    disabled={!selectedAircraft}
-                    className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 rounded-lg shadow transition"
+                    onClick={() => setActiveTab('simbrief')}
+                    className="text-cyan-400 hover:underline font-bold"
                   >
-                    <Zap size={16} /> Avvia Monitoraggio Volo
+                    + Pianifica Volo (SimBrief o Manuale)
                   </button>
-                ) : (
-                  <button
-                    onClick={handleFinalizeFlight}
-                    disabled={loading}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-4 py-2 rounded-lg shadow transition"
-                  >
-                    <CheckCircle size={16} /> Concludi Volo & Incassa Ricavi
-                  </button>
-                )}
-              </div>
+                </div>
+              )}
+
+              {/* Live Pre-Flight / Post-Flight Verification Checklist */}
+              {(() => {
+                const fc = activeFlight?.flight_checks;
+                const brakeOn = liveTelemetry.parking_brake >= 0.5;
+                const stoppedOnGround = liveTelemetry.on_ground > 0.5 && liveTelemetry.groundspeed_kts < 5.0;
+
+                if (flightPhase === 'OFFLINE') {
+                  const originCode = fc?.planned_origin_icao || selectedAircraft?.current_icao || 'N/D';
+                  const dist = fc?.origin_distance_nm;
+                  const atOrigin = fc?.at_origin ?? false;
+                  return (
+                    <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-2 font-mono text-[11px]">
+                      <div className="text-slate-400 font-bold uppercase tracking-wider">Controlli Pre-Volo Obbligatori per l'Avvio:</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${xpConnected ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-rose-950/30 border-rose-500/30 text-rose-300'}`}>
+                          {xpConnected ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                          <span>XP12: {xpConnected ? 'Connesso' : 'Disconnesso'}</span>
+                        </div>
+                        <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${atOrigin && xpConnected ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-rose-950/30 border-rose-500/30 text-rose-300'}`}>
+                          {atOrigin && xpConnected ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                          <span>
+                            Su {originCode}: {dist !== null && dist !== undefined ? (dist <= 5 ? `OK (${dist} NM)` : `Distante ${dist} NM!`) : (xpConnected ? 'OK' : 'N/D')}
+                          </span>
+                        </div>
+                        <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${brakeOn && stoppedOnGround ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'}`}>
+                          {brakeOn && stoppedOnGround ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                          <span>Freni Parcheggio: {brakeOn ? 'INSERITI' : 'DISINSERITI'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Post-Flight / Arrival Checklist + Emergency Diversion Box
+                const targetCode = fc?.planned_destination_icao || 'N/D';
+                const destDist = fc?.destination_distance_nm;
+                const atDest = fc?.at_destination ?? false;
+                return (
+                  <div className="bg-slate-950/70 p-3.5 rounded-lg border border-slate-800 space-y-3 font-mono text-[11px]">
+                    <div className="flex flex-wrap justify-between items-center gap-2">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider">Controlli Chiusura & Parcheggio Finale:</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowDiversionPanel(!showDiversionPanel)}
+                        className="text-amber-300 hover:text-amber-200 underline text-[11px]"
+                      >
+                        {showDiversionPanel ? 'Nascondi Dirottamento / Alternato' : '⚠️ Emergenza o Atterraggio ad Alternato?'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${stoppedOnGround ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'}`}>
+                        {stoppedOnGround ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                        <span>Assetto: {stoppedOnGround ? 'Fermo a terra' : 'In volo / Movimento'}</span>
+                      </div>
+                      <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${brakeOn ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'}`}>
+                        {brakeOn ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                        <span>Freni Parcheggio: {brakeOn ? 'INSERITI' : 'DISINSERITI'}</span>
+                      </div>
+                      <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${atDest && xpConnected ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-rose-950/30 border-rose-500/30 text-rose-300'}`}>
+                        {atDest && xpConnected ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                        <span>
+                          Arrivo {targetCode}: {destDist !== null && destDist !== undefined ? (destDist <= 5 ? `OK (${destDist} NM)` : `Distante ${destDist} NM!`) : (xpConnected ? 'OK' : 'N/D')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {showDiversionPanel && (
+                      <div className="bg-amber-950/20 border border-amber-500/30 p-3 rounded-lg grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                        <div>
+                          <label className="text-amber-300 block mb-1 font-semibold">ICAO Arrivo Effettivo (Alternato)</label>
+                          <input
+                            type="text"
+                            maxLength={4}
+                            placeholder="es. LIRA"
+                            value={actualArrivalIcao}
+                            onChange={(e) => setActualArrivalIcao(e.target.value.toUpperCase())}
+                            className="w-full bg-slate-900 border border-amber-500/40 p-2 rounded text-white font-bold uppercase focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="text-slate-300 block mb-1">Motivo Dirottamento / Emergenza (Opzionale)</label>
+                          <input
+                            type="text"
+                            placeholder="es. Meteo avverso / Emergenza tecnica / Pista chiusa"
+                            value={diversionReason}
+                            onChange={(e) => setDiversionReason(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Glass Cockpit Gauges Grid */}
@@ -2625,89 +2871,350 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: SIMBRIEF DISPATCH */}
+        {/* TAB 5: PIANO DI VOLO & DISPATCH (SIMBRIEF + MANUALE + COMMERCIALE/PERSONALE) */}
         {activeTab === 'simbrief' && (
           <div className="space-y-6">
-            <div className="glass-panel p-6 rounded-xl border border-slate-800">
-              <h2 className="text-xl font-bold text-white">Sincronizzazione SimBrief OFP</h2>
-              <p className="text-xs text-slate-400 font-mono mt-1">
-                Scarica l'ultimo piano operativo generato su SimBrief per il tuo aeromobile e importalo direttamente come volo programmato.
-              </p>
-
-              <div className="flex flex-wrap gap-3 mt-4">
-                <input
-                  type="text"
-                  placeholder="Pilot ID numerico (es. 1106351) o Username SimBrief"
-                  value={simbriefInput}
-                  onChange={(e) => setSimbriefInput(e.target.value)}
-                  className="bg-slate-900 border border-slate-700 px-4 py-2 rounded-lg text-sm font-mono text-white flex-1 min-w-[260px] focus:outline-none focus:border-cyan-500"
-                />
-                <button
-                  onClick={handleFetchSimbrief}
-                  disabled={loading}
-                  className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 rounded-lg text-sm font-mono transition flex items-center gap-2"
-                >
-                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Scarica Ultimo Piano
-                </button>
+            {/* Header & Mode Switcher */}
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Radio size={20} className="text-cyan-400" /> Piano di Volo & Dispatch
+                </h2>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  Importa il piano operativo da SimBrief oppure compila manualmente la rotta e scegli se operare a scopo commerciale o personale/ferry.
+                </p>
               </div>
-            </div>
 
-            {simbriefOfp && (
-              <div className="glass-panel p-6 rounded-xl border border-cyan-500/40">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl font-black font-mono text-cyan-400">{simbriefOfp.flight_number}</span>
-                    <span className="text-xs px-2 py-0.5 rounded font-mono bg-cyan-500/20 text-cyan-300">
-                      {simbriefOfp.aircraft_icao}
-                    </span>
-                  </div>
-                  <div className="text-xs font-mono text-slate-400">Rilasciato: {simbriefOfp.created_at}</div>
-                </div>
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Aircraft Selector */}
+                <select
+                  value={selectedAircraft?.id || ''}
+                  onChange={(e) => {
+                    const ac = fleet.find(a => a.id === parseInt(e.target.value));
+                    if (ac) setSelectedAircraft(ac);
+                  }}
+                  className="bg-slate-900 border border-cyan-500/40 text-cyan-300 font-mono font-bold text-xs px-3 py-2 rounded-lg focus:outline-none"
+                >
+                  {fleet.map((ac) => (
+                    <option key={ac.id} value={ac.id}>
+                      {ac.tail_number} — {ac.name} @ {ac.current_icao}
+                    </option>
+                  ))}
+                  {fleet.length === 0 && <option value="">Nessun aereo in flotta</option>}
+                </select>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 my-4 font-mono text-xs">
-                  <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                    <div className="text-slate-400">Rotta</div>
-                    <div className="text-sm font-bold text-white mt-0.5">
-                      {simbriefOfp.origin_icao} → {simbriefOfp.destination_icao}
-                    </div>
-                    <div className="text-[10px] text-slate-500">Alt: {simbriefOfp.alternate_icao || 'N/A'}</div>
-                  </div>
-
-                  <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                    <div className="text-slate-400">Distanza & Tempo</div>
-                    <div className="text-sm font-bold text-cyan-300 mt-0.5">{simbriefOfp.distance_nm} NM</div>
-                    <div className="text-[10px] text-slate-500">{simbriefOfp.est_time_enroute_min} min enroute</div>
-                  </div>
-
-                  <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                    <div className="text-slate-400">Block Fuel Richiesto</div>
-                    <div className="text-sm font-bold text-purple-300 mt-0.5">{simbriefOfp.block_fuel_kg} kg</div>
-                    <div className="text-[10px] text-slate-500">Burn: {simbriefOfp.trip_fuel_kg} kg</div>
-                  </div>
-
-                  <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                    <div className="text-slate-400">Carico Utile (Payload)</div>
-                    <div className="text-sm font-bold text-emerald-300 mt-0.5">{simbriefOfp.payload_kg} kg</div>
-                    <div className="text-[10px] text-slate-500">{simbriefOfp.pax_count} pax | {simbriefOfp.cargo_kg} kg merci</div>
-                  </div>
-                </div>
-
-                {simbriefOfp.route && (
-                  <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800 font-mono text-xs mb-4">
-                    <span className="text-slate-400">Routing ATC:</span> <span className="text-slate-200">{simbriefOfp.route}</span>
-                  </div>
-                )}
-
-                <div className="flex justify-end gap-3 pt-2">
+                {/* Switcher */}
+                <div className="flex bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs font-mono">
                   <button
-                    onClick={handleImportSimbriefFlight}
-                    disabled={loading}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold font-mono text-sm px-5 py-2.5 rounded-lg shadow transition"
+                    onClick={() => setDispatchMode('simbrief')}
+                    className={`px-3 py-1.5 rounded-md font-bold transition ${
+                      dispatchMode === 'simbrief' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
                   >
-                    <CheckCircle size={16} /> Importa come Contratto e Prepara Aereo
+                    📡 Da SimBrief
+                  </button>
+                  <button
+                    onClick={() => setDispatchMode('manual')}
+                    className={`px-3 py-1.5 rounded-md font-bold transition ${
+                      dispatchMode === 'manual' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    ✍️ Piano Manuale
                   </button>
                 </div>
               </div>
+            </div>
+
+            {/* Economic Regime Selector (Default = Commercial with Revenue) */}
+            <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-2">
+              <div className="text-xs font-mono text-slate-300 font-bold">Regime Economico del Volo:</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                <div
+                  onClick={() => {
+                    setPlanIsCommercial(true);
+                    if (dispatchMode === 'manual') fetchManualEstimate(manualPlan.origin_icao, manualPlan.destination_icao, manualPlan.pax_count, manualPlan.cargo_kg, true);
+                  }}
+                  className={`p-3 rounded-xl border cursor-pointer transition ${
+                    planIsCommercial
+                      ? 'bg-emerald-950/35 border-emerald-400 ring-1 ring-emerald-400'
+                      : 'bg-slate-900/60 border-slate-800 hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className={`font-bold ${planIsCommercial ? 'text-emerald-300' : 'text-white'}`}>
+                      💰 Volo Commerciale ad Incasso (Default)
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">RICAVI ATTIVI</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-sans mt-1">
+                    Genera ricavi automatici in base a distanza, passeggeri e carico trasportato al netto di carburante e tasse.
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => {
+                    setPlanIsCommercial(false);
+                    if (dispatchMode === 'manual') fetchManualEstimate(manualPlan.origin_icao, manualPlan.destination_icao, manualPlan.pax_count, manualPlan.cargo_kg, false);
+                  }}
+                  className={`p-3 rounded-xl border cursor-pointer transition ${
+                    !planIsCommercial
+                      ? 'bg-amber-950/30 border-amber-400 ring-1 ring-amber-400'
+                      : 'bg-slate-900/60 border-slate-800 hover:border-slate-600'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className={`font-bold ${!planIsCommercial ? 'text-amber-300' : 'text-white'}`}>
+                      ✈️ Volo Personale / Trasferimento Ferry
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">€ 0 RICAVI</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-sans mt-1">
+                    Nessun compenso (€ 0,00). Vengono registrati solo i costi reali (carburante, tasse, usura): perfetto per voli privati o ritiro aereo in sede!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* MODE A: SIMBRIEF OFP */}
+            {dispatchMode === 'simbrief' && (
+              <div className="space-y-6">
+                <div className="glass-panel p-6 rounded-xl border border-slate-800">
+                  <h3 className="text-base font-bold text-white">Scarica OFP da SimBrief</h3>
+                  <div className="flex flex-wrap gap-3 mt-3">
+                    <input
+                      type="text"
+                      placeholder="Pilot ID numerico (es. 1106351) o Username SimBrief"
+                      value={simbriefInput}
+                      onChange={(e) => setSimbriefInput(e.target.value)}
+                      className="bg-slate-900 border border-slate-700 px-4 py-2 rounded-lg text-sm font-mono text-white flex-1 min-w-[260px] focus:outline-none focus:border-cyan-500"
+                    />
+                    <button
+                      onClick={handleFetchSimbrief}
+                      disabled={loading}
+                      className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 rounded-lg text-sm font-mono transition flex items-center gap-2"
+                    >
+                      <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Scarica Ultimo Piano
+                    </button>
+                  </div>
+                </div>
+
+                {simbriefOfp && (
+                  <div className="glass-panel p-6 rounded-xl border border-cyan-500/40">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl font-black font-mono text-cyan-400">{simbriefOfp.flight_number}</span>
+                        <span className="text-xs px-2 py-0.5 rounded font-mono bg-cyan-500/20 text-cyan-300">
+                          {simbriefOfp.aircraft_icao}
+                        </span>
+                      </div>
+                      <div className="text-xs font-mono text-slate-400">Rilasciato: {simbriefOfp.created_at}</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 my-4 font-mono text-xs">
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Rotta</div>
+                        <div className="text-sm font-bold text-white mt-0.5">
+                          {simbriefOfp.origin_icao} → {simbriefOfp.destination_icao}
+                        </div>
+                        <div className="text-[10px] text-slate-500">Alt: {simbriefOfp.alternate_icao || 'N/A'}</div>
+                      </div>
+
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Distanza & Tempo</div>
+                        <div className="text-sm font-bold text-cyan-300 mt-0.5">{simbriefOfp.distance_nm} NM</div>
+                        <div className="text-[10px] text-slate-500">{simbriefOfp.est_time_enroute_min} min enroute</div>
+                      </div>
+
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Block Fuel Richiesto</div>
+                        <div className="text-sm font-bold text-purple-300 mt-0.5">{simbriefOfp.block_fuel_kg} kg</div>
+                        <div className="text-[10px] text-slate-500">Burn: {simbriefOfp.trip_fuel_kg} kg</div>
+                      </div>
+
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Incasso Previsto</div>
+                        <div className={`text-sm font-bold mt-0.5 ${planIsCommercial ? 'text-emerald-400' : 'text-slate-400'}`}>
+                          {planIsCommercial ? formatEuro(simbriefOfp.estimated_reward_eur || (simbriefOfp.distance_nm * 20 + simbriefOfp.pax_count * 120)) : '€ 0,00 (Personale)'}
+                        </div>
+                        <div className="text-[10px] text-slate-500">{simbriefOfp.pax_count} pax | {simbriefOfp.cargo_kg} kg merci</div>
+                      </div>
+                    </div>
+
+                    {simbriefOfp.route && (
+                      <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800 font-mono text-xs mb-4">
+                        <span className="text-slate-400">Routing ATC:</span> <span className="text-slate-200">{simbriefOfp.route}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-3 pt-2">
+                      <button
+                        onClick={handleImportSimbriefFlight}
+                        disabled={loading || !selectedAircraft}
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold font-mono text-sm px-5 py-2.5 rounded-lg shadow transition disabled:opacity-50"
+                      >
+                        <CheckCircle size={16} /> Conferma Piano SimBrief & Vai in Plancia
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* MODE B: INSERIMENTO MANUALE PIANO DI VOLO */}
+            {dispatchMode === 'manual' && (
+              <form onSubmit={handleCreateManualPlan} className="glass-panel p-6 rounded-xl border border-cyan-500/30 space-y-5 font-mono text-xs" noValidate>
+                <div className="border-b border-slate-800 pb-3">
+                  <h3 className="text-base font-bold text-white">Compilazione Manuale Piano di Volo (Senza SimBrief)</h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Inserisci partenza, arrivo e carico: la distanza reale e l'eventuale incasso verranno calcolati automaticamente dagli aeroporti di X-Plane 12.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div>
+                    <label className="text-slate-400 block mb-1">Aeroporto Partenza (ICAO) *</label>
+                    <input
+                      type="text"
+                      maxLength={4}
+                      placeholder="es. LIRN"
+                      value={manualPlan.origin_icao}
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        setManualPlan({ ...manualPlan, origin_icao: val });
+                        fetchManualEstimate(val, manualPlan.destination_icao, manualPlan.pax_count, manualPlan.cargo_kg, planIsCommercial);
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-cyan-300 font-bold uppercase focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Aeroporto Destinazione (ICAO) *</label>
+                    <input
+                      type="text"
+                      maxLength={4}
+                      placeholder="es. LIRF"
+                      value={manualPlan.destination_icao}
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        setManualPlan({ ...manualPlan, destination_icao: val });
+                        fetchManualEstimate(manualPlan.origin_icao, val, manualPlan.pax_count, manualPlan.cargo_kg, planIsCommercial);
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-emerald-300 font-bold uppercase focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Alternato (Opzionale)</label>
+                    <input
+                      type="text"
+                      maxLength={4}
+                      placeholder="es. LIRA"
+                      value={manualPlan.alternate_icao}
+                      onChange={(e) => setManualPlan({ ...manualPlan, alternate_icao: e.target.value.toUpperCase() })}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white uppercase focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Callsign / N. Volo (Opzionale)</label>
+                    <input
+                      type="text"
+                      placeholder="es. SO104"
+                      value={manualPlan.flight_number}
+                      onChange={(e) => setManualPlan({ ...manualPlan, flight_number: e.target.value.toUpperCase() })}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white uppercase focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-slate-400 block mb-1">
+                      Distanza NM {manualEstimate?.distance_nm ? `(Auto: ${manualEstimate.distance_nm} NM)` : '(Auto se vuoto)'}
+                    </label>
+                    <input
+                      type="number"
+                      placeholder={manualEstimate?.distance_nm ? String(manualEstimate.distance_nm) : 'Calcolo automatico'}
+                      value={manualPlan.distance_nm}
+                      onChange={(e) => setManualPlan({ ...manualPlan, distance_nm: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Passeggeri a Bordo (Pax)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={manualPlan.pax_count}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setManualPlan({ ...manualPlan, pax_count: v });
+                        fetchManualEstimate(manualPlan.origin_icao, manualPlan.destination_icao, v, manualPlan.cargo_kg, planIsCommercial);
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-slate-400 block mb-1">Cargo / Bagagli (kg)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={manualPlan.cargo_kg}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setManualPlan({ ...manualPlan, cargo_kg: v });
+                        fetchManualEstimate(manualPlan.origin_icao, manualPlan.destination_icao, manualPlan.pax_count, v, planIsCommercial);
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-slate-400 block mb-1">Rotta / Note (Opzionale)</label>
+                  <input
+                    type="text"
+                    placeholder="es. VFR diretto / DCT TEA / Piani personali"
+                    value={manualPlan.route}
+                    onChange={(e) => setManualPlan({ ...manualPlan, route: e.target.value })}
+                    className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+
+                {/* Live Preview & Submit */}
+                <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <div className="text-slate-400">Riepilogo Economico Previsto:</div>
+                    <div className="text-base font-bold text-white mt-0.5">
+                      {manualPlan.origin_icao || '----'} ➔ {manualPlan.destination_icao || '----'}
+                      {manualEstimate?.estimated_distance_nm && (
+                        <span className="text-cyan-300 text-xs ml-2">({manualPlan.distance_nm || manualEstimate.estimated_distance_nm} NM)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <div className="text-[10px] text-slate-400 uppercase">Compenso Previsto</div>
+                      <div className={`text-lg font-black ${planIsCommercial ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {planIsCommercial
+                          ? formatEuro(manualEstimate?.estimated_reward_eur ?? 650)
+                          : '€ 0,00 (Solo Costi)'}
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading || !selectedAircraft}
+                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-3 rounded-lg shadow transition disabled:opacity-50"
+                    >
+                      <CheckCircle size={16} /> Conferma Piano Manuale & Vai in Plancia
+                    </button>
+                  </div>
+                </div>
+              </form>
             )}
           </div>
         )}

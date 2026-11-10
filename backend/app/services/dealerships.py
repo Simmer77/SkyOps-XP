@@ -137,6 +137,8 @@ CONTINENT_NAMES = {
 }
 
 
+NEGATIVE_AIRPORT_CACHE = set()
+
 class DealershipService:
     @staticmethod
     def get_continent_from_icao(icao: str) -> str:
@@ -158,15 +160,27 @@ class DealershipService:
         return "EU"
 
     @staticmethod
-    def get_airport_coords(icao: str, xp12_path: Optional[str] = None) -> Tuple[str, float, float]:
-        """Looks up airport name and coordinates from memory cache or X-Plane 12 apt.dat"""
+    def resolve_airport_coords(icao: str, xp12_path: Optional[str] = None) -> Optional[Tuple[str, float, float]]:
+        """
+        Strictly resolves airport name and exact coordinates from cache or X-Plane 12 apt.dat.
+        Returns None if the ICAO cannot be verified.
+        """
+        if not icao:
+            return None
         code = icao.strip().upper()
         if code in AIRPORT_CACHE:
             return AIRPORT_CACHE[code]
+        if code in NEGATIVE_AIRPORT_CACHE:
+            return None
 
-        # Try scanning X-Plane 12's Global Airports/Earth nav data/apt.dat if available
-        if xp12_path:
-            apt_dat = Path(xp12_path) / "Global Scenery" / "Global Airports" / "Earth nav data" / "apt.dat"
+        target_xp = xp12_path
+        if not target_xp:
+            from app.services.xp_scanner import XP12ScannerService
+            target_xp = XP12ScannerService.detect_xp12_path()
+
+        # Scan X-Plane 12's Global Airports/Earth nav data/apt.dat if available
+        if target_xp:
+            apt_dat = Path(target_xp) / "Global Scenery" / "Global Airports" / "Earth nav data" / "apt.dat"
             if apt_dat.exists() and apt_dat.is_file():
                 try:
                     found_header = False
@@ -194,7 +208,17 @@ class DealershipService:
                 except Exception as e:
                     logger.warning(f"Error reading apt.dat for {code}: {e}")
 
-        # Continent centroid fallback if offline or non-existent ICAO
+        NEGATIVE_AIRPORT_CACHE.add(code)
+        return None
+
+    @staticmethod
+    def get_airport_coords(icao: str, xp12_path: Optional[str] = None) -> Tuple[str, float, float]:
+        """Looks up airport name and coordinates from memory cache or X-Plane 12 apt.dat with continent fallback"""
+        resolved = DealershipService.resolve_airport_coords(icao, xp12_path)
+        if resolved:
+            return resolved
+
+        code = (icao or "LIRN").strip().upper()
         cont = DealershipService.get_continent_from_icao(code)
         fallbacks = {
             "EU": (code, 46.5, 10.5),
@@ -205,6 +229,23 @@ class DealershipService:
             "AF": (code, -26.0, 28.0),
         }
         return fallbacks.get(cont, (code, 41.8, 12.2))
+
+    @staticmethod
+    def distance_between_icaos_nm(icao1: str, icao2: str, xp12_path: Optional[str] = None) -> Optional[float]:
+        c1 = DealershipService.resolve_airport_coords(icao1, xp12_path)
+        c2 = DealershipService.resolve_airport_coords(icao2, xp12_path)
+        if not c1 or not c2:
+            return None
+        return DealershipService._haversine_nm(c1[1], c1[2], c2[1], c2[2])
+
+    @staticmethod
+    def distance_from_live_pos_nm(lat: float, lon: float, target_icao: str, xp12_path: Optional[str] = None) -> Optional[float]:
+        if lat == 0.0 and lon == 0.0:
+            return None
+        coords = DealershipService.resolve_airport_coords(target_icao, xp12_path)
+        if not coords:
+            return None
+        return DealershipService._haversine_nm(lat, lon, coords[1], coords[2])
 
     @staticmethod
     def _haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
