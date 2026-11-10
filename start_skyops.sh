@@ -23,4 +23,4 @@ echo "----------------------------------------------------------"
 
 cd backend
 export PYTHONPATH=.
-venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+venv/bin/uvicorn skyops_server:skyops_app --host 0.0.0.0 --port 8000
