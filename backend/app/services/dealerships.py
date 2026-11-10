@@ -20,6 +20,13 @@ AIRPORT_CACHE: Dict[str, Tuple[str, float, float]] = {
     "LEMD": ("Madrid Barajas (ES) — Centro Broker & MRO MD-80 Europe", 40.4719, -3.5626),
     "LFPB": ("Paris Le Bourget (FR) — European Business Aviation Hub", 48.9694, 2.4414),
     "LSZC": ("Buochs (CH) — Pilatus Aircraft Factory", 46.9744, 8.3969),
+    "LOAN": ("Wiener Neustadt Ost (AT) — Diamond Aircraft Factory", 47.8433, 16.2601),
+    "LFBT": ("Tarbes-Lourdes-Pyrénées (FR) — Daher TBM Factory", 43.1787, 0.0064),
+    "LIAU": ("Capua Oreste Salomone (IT) — Fabbrica Tecnam", 41.1167, 14.1833),
+    "LFBD": ("Bordeaux Mérignac (FR) — Dassault Falcon Assembly", 44.8283, -0.7156),
+    "EGLF": ("Farnborough (UK) — Gulfstream & Executive Europe", 51.2758, -0.7763),
+    "ESSL": ("Linköping Saab (SE) — Saab Aircraft Factory", 58.4022, 15.6806),
+    "EGKK": ("London Gatwick (UK) — UK Regional & De Havilland Hub", 51.1481, -0.1903),
 
     # North America Dealership & Factory Centers
     "KDLH": ("Duluth Intl, MN (USA) — Cirrus Aircraft Factory", 46.8421, -92.1936),
@@ -33,6 +40,15 @@ AIRPORT_CACHE: Dict[str, Tuple[str, float, float]] = {
     "KLGB": ("Long Beach, CA (USA) — McDonnell Douglas Delivery Hub", 33.8177, -118.1516),
     "KTEB": ("Teterboro, NJ (USA) — North America Broker Hub", 40.8501, -74.0608),
     "CYHU": ("Montréal Saint-Hubert (CA) — Regional GA Center", 45.5175, -73.4169),
+    "CYXU": ("London Intl, ON (CA) — Diamond Aircraft North America", 43.0331, -81.1511),
+    "CYUL": ("Montréal Trudeau (CA) — Bombardier Final Assembly", 45.4706, -73.7408),
+    "CYYZ": ("Toronto Pearson (CA) — De Havilland Canada Hub", 43.6777, -79.6248),
+    "KSAV": ("Savannah/Hilton Head, GA (USA) — Gulfstream Aerospace HQ", 32.1276, -81.2021),
+    "KBJC": ("Broomfield Rocky Mountain, CO (USA) — Pilatus US", 39.9088, -105.1172),
+    "KSEF": ("Sebring Regional, FL (USA) — Tecnam North America", 27.4564, -81.3424),
+    "KERV": ("Kerrville Municipal, TX (USA) — Mooney Aircraft Factory", 29.9767, -99.0855),
+    "KPMP": ("Pompano Beach, FL (USA) — Daher TBM Service US", 26.2471, -80.1111),
+    "KMIA": ("Miami International, FL (USA) — ATR Americas Hub", 25.7959, -80.2870),
 
     # South America
     "SBSJ": ("São José dos Campos (BR) — Sede Centrale Embraer", -23.2289, -45.8617),
@@ -93,7 +109,22 @@ MANUFACTURER_DEALERSHIPS: Dict[str, Dict[str, str]] = {
     "lancair": {"EU": "EDFE", "NA": "KRDM", "SA": "SBSP", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
     "van": {"EU": "LFPB", "NA": "KUAO", "SA": "SBJD", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
     "mcdonnell": {"EU": "LEMD", "NA": "KLGB", "SA": "SCEL", "AS": "WSSS", "OC": "YSSY", "AF": "FAOR"},
-    "pilatus": {"EU": "LSZC", "NA": "KICT", "SA": "SBSP", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "pilatus": {"EU": "LSZC", "NA": "KBJC", "SA": "SBSP", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "diamond": {"EU": "LOAN", "NA": "CYXU", "SA": "SBJD", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "daher": {"EU": "LFBT", "NA": "KPMP", "SA": "SBSP", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "socata": {"EU": "LFBT", "NA": "KPMP", "SA": "SBSP", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "tecnam": {"EU": "LIAU", "NA": "KSEF", "SA": "SBJD", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "bombardier": {"EU": "LFPB", "NA": "CYUL", "SA": "SBSP", "AS": "OMDW", "OC": "YSSY", "AF": "FALA"},
+    "canadair": {"EU": "LFPB", "NA": "CYUL", "SA": "SBSP", "AS": "OMDW", "OC": "YSSY", "AF": "FALA"},
+    "dassault": {"EU": "LFBD", "NA": "KTEB", "SA": "SBSP", "AS": "OMDW", "OC": "YSSY", "AF": "FALA"},
+    "gulfstream": {"EU": "EGLF", "NA": "KSAV", "SA": "SBSP", "AS": "OMDW", "OC": "YSSY", "AF": "FALA"},
+    "atr": {"EU": "LFBO", "NA": "KMIA", "SA": "SCEL", "AS": "WSSS", "OC": "YSSY", "AF": "FAOR"},
+    "havilland": {"EU": "EGKK", "NA": "CYYZ", "SA": "SCEL", "AS": "WSSS", "OC": "YSSY", "AF": "FAOR"},
+    "mooney": {"EU": "EDFE", "NA": "KERV", "SA": "SBJD", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "saab": {"EU": "ESSL", "NA": "CYUL", "SA": "SCEL", "AS": "WSSS", "OC": "YSSY", "AF": "FAOR"},
+    "fokker": {"EU": "EHAM", "NA": "KTEB", "SA": "SCEL", "AS": "WSSS", "OC": "YSSY", "AF": "FAOR"},
+    "quest": {"EU": "LFBT", "NA": "KICT", "SA": "SBJD", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
+    "kodiak": {"EU": "LFBT", "NA": "KICT", "SA": "SBJD", "AS": "WSSL", "OC": "YSCN", "AF": "FALA"},
 }
 
 CONTINENT_NAMES = {
