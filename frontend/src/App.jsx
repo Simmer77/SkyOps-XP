@@ -96,8 +96,9 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setSystemStatus(data);
-        if (data.company?.simbrief_username && !simbriefInput) {
-          setSimbriefInput(data.company.simbrief_username);
+        const savedSimbrief = data.company?.simbrief_pilot_id || data.company?.simbrief_username;
+        if (savedSimbrief && !simbriefInput) {
+          setSimbriefInput(savedSimbrief);
         }
       }
     } catch (e) {
@@ -518,13 +519,16 @@ export default function App() {
 
   // SimBrief
   const handleFetchSimbrief = async () => {
-    if (!simbriefInput) {
-      showNotice('Inserisci il tuo username o Pilot ID SimBrief', 'error');
+    const cleaned = simbriefInput.trim();
+    if (!cleaned) {
+      showNotice('Inserisci il tuo Pilot ID numerico (es. 1106351) o Username SimBrief', 'error');
       return;
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/simbrief/latest?username=${encodeURIComponent(simbriefInput)}`);
+      const isNumericId = /^\d+$/.test(cleaned);
+      const paramKey = isNumericId ? 'pilot_id' : 'username';
+      const res = await fetch(`/api/simbrief/latest?${paramKey}=${encodeURIComponent(cleaned)}`);
       if (res.ok) {
         const ofp = await res.json();
         setSimbriefOfp(ofp);
@@ -541,14 +545,20 @@ export default function App() {
   };
 
   const handleImportSimbriefFlight = async () => {
-    if (!selectedAircraft || !simbriefOfp) return;
+    if (!selectedAircraft || !simbriefOfp) {
+      showNotice('Seleziona prima un aeromobile dalla flotta', 'error');
+      return;
+    }
+    const cleaned = simbriefInput.trim();
+    const isNumericId = /^\d+$/.test(cleaned);
     setLoading(true);
     try {
       const res = await fetch('/api/simbrief/import_flight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: simbriefInput,
+          username: isNumericId ? null : cleaned,
+          pilot_id: isNumericId ? cleaned : null,
           aircraft_id: selectedAircraft.id
         })
       });
@@ -557,6 +567,10 @@ export default function App() {
         showNotice(data.message, 'success');
         fetchFleet();
         fetchJobs(selectedAircraft.current_icao);
+        // Avvia automaticamente il volo monitorato con il contratto importato da SimBrief
+        if (data.job?.id) {
+          await handleStartFlight(data.job.id);
+        }
         setActiveTab('flight');
       } else {
         showNotice(data.detail, 'error');
@@ -1839,7 +1853,7 @@ export default function App() {
               <div className="flex flex-wrap gap-3 mt-4">
                 <input
                   type="text"
-                  placeholder="SimBrief Username o Pilot ID (es. simmer77)"
+                  placeholder="Pilot ID numerico (es. 1106351) o Username SimBrief"
                   value={simbriefInput}
                   onChange={(e) => setSimbriefInput(e.target.value)}
                   className="bg-slate-900 border border-slate-700 px-4 py-2 rounded-lg text-sm font-mono text-white flex-1 min-w-[260px] focus:outline-none focus:border-cyan-500"

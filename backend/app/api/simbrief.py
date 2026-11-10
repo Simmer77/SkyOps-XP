@@ -21,20 +21,34 @@ async def get_latest_ofp(
     pilot_id: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db)
 ):
+    comp_res = await db.execute(select(Company).limit(1))
+    company = comp_res.scalars().first()
+
     # If not passed in query, try looking up saved company settings
-    if not username and not pilot_id:
-        comp_res = await db.execute(select(Company).limit(1))
-        company = comp_res.scalars().first()
-        if company:
-            username = company.simbrief_username
-            pilot_id = company.simbrief_pilot_id
+    if not username and not pilot_id and company:
+        pilot_id = company.simbrief_pilot_id
+        username = company.simbrief_username
             
     if not username and not pilot_id:
         raise HTTPException(status_code=400, detail="Inserisci il tuo username o Pilot ID di SimBrief.")
         
     ofp = await SimBriefService.fetch_latest_ofp(username=username, pilot_id=pilot_id)
     if not ofp:
-        raise HTTPException(status_code=404, detail="Nessun piano di volo SimBrief trovato o errore di connessione.")
+        raise HTTPException(
+            status_code=404, 
+            detail="Nessun piano di volo SimBrief trovato. Verifica il tuo Pilot ID numerico (es. 1106351) o username e assicurati di aver generato un OFP su SimBrief."
+        )
+
+    # Save valid SimBrief credentials for future sessions
+    if company:
+        raw_val = (pilot_id or username or "").strip()
+        if raw_val.isdigit():
+            company.simbrief_pilot_id = raw_val
+        elif raw_val:
+            company.simbrief_username = raw_val
+        if ofp.get("user_id"):
+            company.simbrief_pilot_id = ofp["user_id"]
+        await db.commit()
         
     return ofp
 
@@ -72,14 +86,17 @@ async def import_simbrief_flight(req: ImportOFPRequest, db: AsyncSession = Depen
     )
     db.add(job)
     
-    # Save SimBrief username/id if provided
+    # Save SimBrief username/id
     comp_res = await db.execute(select(Company).limit(1))
     company = comp_res.scalars().first()
     if company:
-        if req.username:
-            company.simbrief_username = req.username
-        if req.pilot_id:
-            company.simbrief_pilot_id = req.pilot_id
+        raw_val = (req.pilot_id or req.username or "").strip()
+        if raw_val.isdigit():
+            company.simbrief_pilot_id = raw_val
+        elif raw_val:
+            company.simbrief_username = raw_val
+        if ofp.get("user_id"):
+            company.simbrief_pilot_id = ofp["user_id"]
             
     await db.commit()
     await db.refresh(job)
