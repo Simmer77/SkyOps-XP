@@ -72,6 +72,8 @@ export default function App() {
   // Dispatch (SimBrief + Manual) & Pre/Post Flight Checks State
   const [dispatchMode, setDispatchMode] = useState('simbrief'); // 'simbrief' | 'manual'
   const [planIsCommercial, setPlanIsCommercial] = useState(true); // Default: tutti i voli ad incasso
+  const [planExcludeCrew, setPlanExcludeCrew] = useState(false); // Escludi costi equipaggio (es. Volo Solo VFR)
+  const [crewOverride, setCrewOverride] = useState(null); // Override manuale in HUD (null = usa piano/tracker)
   const [manualPlan, setManualPlan] = useState({
     origin_icao: '',
     destination_icao: '',
@@ -463,6 +465,10 @@ export default function App() {
     }
   }, [selectedAircraft]);
 
+  useEffect(() => {
+    setCrewOverride(null);
+  }, [selectedAircraft?.id]);
+
   // 2. WebSocket Telemetry Stream
   useEffect(() => {
     let ws;
@@ -777,11 +783,13 @@ export default function App() {
           username: isNumericId ? null : cleaned,
           pilot_id: isNumericId ? cleaned : null,
           aircraft_id: selectedAircraft.id,
-          is_commercial: planIsCommercial
+          is_commercial: planIsCommercial,
+          exclude_crew_cost: planExcludeCrew
         })
       });
       const data = await res.json();
       if (res.ok) {
+        setCrewOverride(null);
         showNotice(`${data.message} Vai in Plancia per completare i controlli Pre-Volo.`, 'success');
         await Promise.all([fetchFleet(), fetchActiveFlight(selectedAircraft.id)]);
         setActiveTab('flight');
@@ -837,11 +845,13 @@ export default function App() {
           pax_count: parseInt(manualPlan.pax_count) || 0,
           cargo_kg: parseFloat(manualPlan.cargo_kg) || 0.0,
           route: manualPlan.route,
-          is_commercial: planIsCommercial
+          is_commercial: planIsCommercial,
+          exclude_crew_cost: planExcludeCrew
         })
       });
       const data = await res.json();
       if (res.ok) {
+        setCrewOverride(null);
         showNotice(data.message, 'success');
         await Promise.all([fetchFleet(), fetchActiveFlight(selectedAircraft.id)]);
         setActiveTab('flight');
@@ -864,17 +874,20 @@ export default function App() {
       }
     }
     try {
+      const effectiveExcludeCrew = crewOverride !== null ? crewOverride : Boolean(activeFlight?.exclude_crew_cost);
       const res = await fetch('/api/flights/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           aircraft_id: selectedAircraft.id,
-          job_id: jobId || activeFlight?.job?.id || null
+          job_id: jobId || activeFlight?.job?.id || null,
+          exclude_crew_cost: effectiveExcludeCrew
         })
       });
       const data = await res.json();
       if (res.ok) {
         setLastFlightSummary(null);
+        setCrewOverride(null);
         showNotice(data.message || `Volo avviato per ${selectedAircraft.tail_number}!`, 'success');
         fetchStatus();
         fetchFleet();
@@ -929,12 +942,16 @@ export default function App() {
   const handleFinalizeFlight = async () => {
     setLoading(true);
     try {
-      const payload = (showDiversionPanel && actualArrivalIcao.trim())
-        ? {
-            actual_arrival_icao: actualArrivalIcao.trim().toUpperCase(),
-            diversion_reason: diversionReason.trim() || 'Dirottamento / Emergenza'
-          }
-        : {};
+      const effectiveExcludeCrew = crewOverride !== null ? crewOverride : Boolean(activeFlight?.exclude_crew_cost);
+      const payload = {
+        exclude_crew_cost: effectiveExcludeCrew,
+        ...((showDiversionPanel && actualArrivalIcao.trim())
+          ? {
+              actual_arrival_icao: actualArrivalIcao.trim().toUpperCase(),
+              diversion_reason: diversionReason.trim() || 'Dirottamento / Emergenza'
+            }
+          : {})
+      };
       const res = await fetch('/api/flights/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -943,6 +960,7 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         setLastFlightSummary(data.summary);
+        setCrewOverride(null);
         showNotice(`Volo completato! Utile netto: ${formatEuro(data.summary.financials.net_profit)}`, 'success');
         setShowDiversionPanel(false);
         setActualArrivalIcao('');
@@ -1393,6 +1411,29 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">
+                  {selectedAircraft && (() => {
+                    const isCrewExcluded = crewOverride !== null ? crewOverride : Boolean(activeFlight?.exclude_crew_cost);
+                    const crewSpec = activeFlight?.crew_spec || {
+                      label: selectedAircraft.category === 'AIRLINER' ? '2 Piloti + 4 A/V' : selectedAircraft.category === 'BIZJET' ? '2 Piloti + 1 A/V' : '1 Pilota',
+                      hourly_rate_eur: selectedAircraft.category === 'AIRLINER' ? 520 : selectedAircraft.category === 'BIZJET' ? 240 : 90
+                    };
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setCrewOverride(!isCrewExcluded)}
+                        className={`flex items-center gap-1.5 font-mono text-xs font-semibold px-3 py-2 rounded-lg border transition ${
+                          isCrewExcluded
+                            ? 'bg-amber-950/40 border-amber-500/50 text-amber-300 hover:bg-amber-900/40'
+                            : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200 hover:bg-indigo-900/40'
+                        }`}
+                        title="Clicca per includere o escludere il costo orario di piloti e assistenti di volo (es. Volo Solo VFR)"
+                      >
+                        {isCrewExcluded
+                          ? '🧑‍✈️ Volo Solo VFR (Equipaggio € 0)'
+                          : `👨‍✈️ Equipaggio: ${crewSpec.label} (€ ${crewSpec.hourly_rate_eur}/h)`}
+                      </button>
+                    );
+                  })()}
                   {flightPhase === 'OFFLINE' && selectedAircraft && (
                     <button
                       onClick={handleRefuelAircraft}
@@ -1653,6 +1694,21 @@ export default function App() {
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.lease_cost)}</span>
                       </div>
                     )}
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        (-) Equipaggio ({lastFlightSummary.financials?.crew_label || 'Piloti/A.V.'}):
+                        {lastFlightSummary.financials?.crew_excluded && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                            SOLO / VFR
+                          </span>
+                        )}
+                      </span>
+                      <span className={lastFlightSummary.financials?.crew_cost > 0 ? 'text-rose-400' : 'text-slate-400'}>
+                        {lastFlightSummary.financials?.crew_cost > 0
+                          ? `-${formatEuro(lastFlightSummary.financials.crew_cost)}`
+                          : '€ 0,00'}
+                      </span>
+                    </div>
                     <div className="flex justify-between border-t border-slate-800 pt-2 font-bold text-sm">
                       <span className="text-white">(=) Utile Netto Volo:</span>
                       <span className={lastFlightSummary.financials?.net_profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
@@ -3165,6 +3221,41 @@ export default function App() {
                   </p>
                 </div>
               </div>
+
+              {/* Crew Cost Toggle Option */}
+              <div
+                onClick={() => setPlanExcludeCrew(!planExcludeCrew)}
+                className={`mt-2 p-3 rounded-xl border cursor-pointer transition flex flex-wrap items-center justify-between gap-3 ${
+                  planExcludeCrew
+                    ? 'bg-amber-950/25 border-amber-500/50'
+                    : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={planExcludeCrew}
+                    onChange={(e) => setPlanExcludeCrew(e.target.checked)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                  />
+                  <div>
+                    <span className={`font-mono text-xs font-bold ${planExcludeCrew ? 'text-amber-300' : 'text-slate-200'}`}>
+                      🧑‍✈️ Escludi Costo Equipaggio (Volo Solo / VFR / Pilota Proprietario)
+                    </span>
+                    <p className="text-[11px] text-slate-400 font-sans">
+                      {planExcludeCrew
+                        ? 'Attivo: nessun costo orario di piloti o assistenti di volo verrà addebitato (ideale per voli privati VFR).'
+                        : `Standard (${selectedAircraft?.category || 'GA'}): verrà addebitato l'equipaggio di linea (${selectedAircraft?.category === 'AIRLINER' ? '2 Piloti + 4 A/V • € 520/h' : selectedAircraft?.category === 'BIZJET' ? '2 Piloti + 1 A/V • € 240/h' : '1 Pilota • € 90/h'}).`}
+                    </p>
+                  </div>
+                </div>
+                <span className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded ${
+                  planExcludeCrew ? 'bg-amber-500/20 text-amber-300' : 'bg-indigo-500/20 text-indigo-300'
+                }`}>
+                  {planExcludeCrew ? 'EQUIPAGGIO € 0' : 'EQUIPAGGIO INCLUSO'}
+                </span>
+              </div>
             </div>
 
             {/* MODE A: SIMBRIEF OFP */}
@@ -3915,6 +4006,12 @@ export default function App() {
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.aircraft_leases_eur ?? 0)}
                             </span>
                           </div>
+                          <div className="flex justify-between items-center">
+                            <span>Equipaggio & Personale di Bordo (Piloti / A.V.)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.crew_eur ?? 0)}
+                            </span>
+                          </div>
                         </div>
                       </div>
 
@@ -3998,6 +4095,7 @@ export default function App() {
                       { id: 'FUEL', label: 'Carburante' },
                       { id: 'LANDING_FEE', label: 'Tasse Atterraggio' },
                       { id: 'MAINTENANCE', label: 'Manutenzione' },
+                      { id: 'CREW', label: 'Equipaggio' },
                       { id: 'LEASE', label: 'Noleggi' },
                       { id: 'FIXED_HANGAR', label: 'Hangar' },
                       { id: 'FIXED_INSURANCE', label: 'Assicurazioni' },
@@ -4055,6 +4153,7 @@ export default function App() {
                                   tx.category === 'FUEL' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
                                   tx.category === 'LANDING_FEE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
                                   tx.category === 'MAINTENANCE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                                  tx.category === 'CREW' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
                                   tx.category === 'LEASE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
                                   'bg-slate-800 text-slate-300'
                                 }`}>
@@ -4133,7 +4232,10 @@ export default function App() {
                     <MapPin size={16} /> 2. TASSE D ATTERRAGGIO (LANDING & HANDLING FEES)
                   </div>
                   <div className="text-xs text-slate-300 font-mono leading-relaxed">
-                    <div className="font-bold text-white mb-2">{financialGuide.landing_fee_rules.formula}</div>
+                    <div className="font-bold text-white mb-1">{financialGuide.landing_fee_rules.formula}</div>
+                    {financialGuide.landing_fee_rules.notes && (
+                      <p className="text-emerald-300/90 mb-2">{financialGuide.landing_fee_rules.notes}</p>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {financialGuide.landing_fee_rules.categories.map((cat, idx) => (
                         <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
@@ -4197,6 +4299,28 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* 5. Crew Rules */}
+                {financialGuide.crew_rules && (
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm font-mono">
+                      <Shield size={16} /> 5. PERSONALE DI BORDO (PILOTI & ASSISTENTI DI VOLO)
+                    </div>
+                    <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                      <div className="font-bold text-white mb-1">{financialGuide.crew_rules.formula}</div>
+                      <p className="text-slate-400 mb-3">{financialGuide.crew_rules.notes}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {financialGuide.crew_rules.categories.map((cat, idx) => (
+                          <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                            <div className="font-bold text-indigo-300">{cat.category}</div>
+                            <div className="text-slate-300 mt-1">{cat.crew}</div>
+                            <div className="text-emerald-400 font-bold mt-1">{cat.rate}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

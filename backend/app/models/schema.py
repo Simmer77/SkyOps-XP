@@ -96,6 +96,7 @@ class Job(Base):
     reward_usd = Column(Float)
     penalty_usd = Column(Float, default=0.0)
     status = Column(String, default="AVAILABLE") # "AVAILABLE", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "FAILED"
+    exclude_crew_cost = Column(Boolean, default=False)
     
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime, nullable=True)
@@ -132,6 +133,7 @@ class FlightLog(Base):
     fuel_cost_usd = Column(Float, default=0.0)
     landing_fee_usd = Column(Float, default=0.0)
     lease_cost_usd = Column(Float, default=0.0)
+    crew_cost_usd = Column(Float, default=0.0)
     maintenance_cost_usd = Column(Float, default=0.0)
     net_profit_usd = Column(Float, default=0.0)
     

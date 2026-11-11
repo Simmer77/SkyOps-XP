@@ -18,6 +18,10 @@ CATEGORY_SPECS = {
         "hangar_weekly_eur": 120.0,
         "insurance_weekly_eur": 160.0,
         "default_lease_rate_eur_h": 320.0,
+        "pilots_count": 1,
+        "attendants_count": 0,
+        "crew_hourly_rate_eur": 90.0,
+        "crew_label": "1 Pilota",
     },
     "BIZJET": {
         "label": "Business Jet (Phenom 300, Eclipse 550, Citation)",
@@ -27,6 +31,10 @@ CATEGORY_SPECS = {
         "hangar_weekly_eur": 350.0,
         "insurance_weekly_eur": 520.0,
         "default_lease_rate_eur_h": 850.0,
+        "pilots_count": 2,
+        "attendants_count": 1,
+        "crew_hourly_rate_eur": 240.0,
+        "crew_label": "2 Piloti + 1 Assistente di Volo",
     },
     "AIRLINER": {
         "label": "Airliner di Linea (Boeing 737, Airbus A320)",
@@ -36,6 +44,10 @@ CATEGORY_SPECS = {
         "hangar_weekly_eur": 1400.0,
         "insurance_weekly_eur": 1950.0,
         "default_lease_rate_eur_h": 1650.0,
+        "pilots_count": 2,
+        "attendants_count": 4,
+        "crew_hourly_rate_eur": 520.0,
+        "crew_label": "2 Piloti + 4 Assistenti di Volo",
     }
 }
 
@@ -48,7 +60,8 @@ class EconomyService:
         job_reward: float,
         is_leased: bool = False,
         lease_rate_hourly: float = 0.0,
-        is_home_base: bool = False
+        is_home_base: bool = False,
+        exclude_crew_cost: bool = False
     ) -> Dict[str, Any]:
         """
         Calcola il bilancio finanziario completo del volo in Euro (€).
@@ -71,9 +84,13 @@ class EconomyService:
         
         # 3. Costo Noleggio se aereo noleggiato (Block hours * tariffa)
         lease_cost = round(flight_hours * lease_rate_hourly, 2) if is_leased else 0.0
+
+        # 4. Costo Equipaggio (Piloti + Assistenti di Volo in base alla classe velivolo, escludibile per VFR / Solo)
+        crew_hourly = specs.get("crew_hourly_rate_eur", 90.0)
+        crew_cost = 0.0 if exclude_crew_cost else round(flight_hours * crew_hourly, 2)
         
-        # 4. Spese totali e utile netto (al netto dei rifornimenti già pagati alla pompa)
-        total_expenses = round(fuel_cost + landing_fee + lease_cost, 2)
+        # 5. Spese totali e utile netto (al netto dei rifornimenti già pagati alla pompa)
+        total_expenses = round(fuel_cost + landing_fee + lease_cost + crew_cost, 2)
         net_profit = round(job_reward - total_expenses, 2)
         
         return {
@@ -81,6 +98,10 @@ class EconomyService:
             "fuel_cost": fuel_cost,
             "landing_fee": landing_fee,
             "lease_cost": lease_cost,
+            "crew_cost": crew_cost,
+            "crew_excluded": exclude_crew_cost,
+            "crew_label": specs.get("crew_label", "1 Pilota"),
+            "crew_hourly_rate_eur": crew_hourly,
             "total_expenses": total_expenses,
             "net_profit": net_profit,
             "is_home_base": is_home_base,
@@ -317,7 +338,7 @@ class EconomyService:
                 },
                 "income_statement": {
                     "gross_revenue_eur": 0.0,
-                    "direct_operating_costs": {"total_eur": 0.0, "fuel_eur": 0.0, "landing_fees_eur": 0.0, "aircraft_leases_eur": 0.0},
+                    "direct_operating_costs": {"total_eur": 0.0, "fuel_eur": 0.0, "landing_fees_eur": 0.0, "aircraft_leases_eur": 0.0, "crew_eur": 0.0},
                     "maintenance_costs": {"total_eur": 0.0},
                     "fixed_overheads": {"total_eur": 0.0, "hangar_eur": 0.0, "insurance_eur": 0.0, "financing_eur": 0.0},
                     "total_expenses_eur": 0.0,
@@ -341,6 +362,7 @@ class EconomyService:
         expense_fuel = abs(sum(t.amount_eur for t in transactions if t.category in ["FUEL", "EXPENSE_FUEL"]))
         expense_landing = abs(sum(t.amount_eur for t in transactions if t.category in ["LANDING_FEE", "EXPENSE_LANDING"]))
         expense_lease = abs(sum(t.amount_eur for t in transactions if t.category in ["LEASE", "EXPENSE_LEASE"]))
+        expense_crew = abs(sum(t.amount_eur for t in transactions if t.category in ["CREW", "EXPENSE_CREW"]))
         expense_maint = abs(sum(t.amount_eur for t in transactions if t.category in ["MAINTENANCE", "EXPENSE_MAINTENANCE"]))
         expense_hangar = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_HANGAR"]))
         expense_insurance = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_INSURANCE"]))
@@ -354,12 +376,13 @@ class EconomyService:
             expense_fuel = sum(f.fuel_cost_usd or 0.0 for f in flights)
             expense_landing = sum(f.landing_fee_usd or 0.0 for f in flights)
             expense_lease = sum(f.lease_cost_usd or 0.0 for f in flights)
+            expense_crew = sum(f.crew_cost_usd or 0.0 for f in flights)
             
             mv_res = await session.execute(select(MaintenanceEvent))
             events = mv_res.scalars().all()
             expense_maint = sum(m.cost_usd or 0.0 for m in events)
             
-        direct_operating_costs = round(expense_fuel + expense_landing + expense_lease, 2)
+        direct_operating_costs = round(expense_fuel + expense_landing + expense_lease + expense_crew, 2)
         fixed_overheads = round(expense_hangar + expense_insurance + expense_financing, 2)
         total_expenses = round(direct_operating_costs + expense_maint + fixed_overheads, 2)
         net_profit = round(revenue_flight - total_expenses, 2)
@@ -388,7 +411,8 @@ class EconomyService:
                     "total_eur": direct_operating_costs,
                     "fuel_eur": round(expense_fuel, 2),
                     "landing_fees_eur": round(expense_landing, 2),
-                    "aircraft_leases_eur": round(expense_lease, 2)
+                    "aircraft_leases_eur": round(expense_lease, 2),
+                    "crew_eur": round(expense_crew, 2)
                 },
                 "maintenance_costs": {
                     "total_eur": round(expense_maint, 2)
@@ -460,6 +484,15 @@ class EconomyService:
                 "types": [
                     {"type": "Dry Lease (Noleggio a Secco)", "description": "Tariffa oraria fissa per la cellula. Il carburante è interamente a tuo carico."},
                     {"type": "Wet Lease (Noleggio Completo)", "description": "Include assicurazione e manutenzione ordinaria a carico del noleggiatore."}
+                ]
+            },
+            "crew_rules": {
+                "formula": "Costo Equipaggio = Ore di Volo (Block Time) × Tariffa Oraria Equipaggio (escludibile su voli solo VFR)",
+                "notes": "Puoi disattivare l'addebito dell'equipaggio prima della partenza o in plancia se voli in solitario (Owner-Pilot / VFR senza assistenti).",
+                "categories": [
+                    {"category": "General Aviation (GA)", "crew": "1 Pilota", "rate": "€ 90.00 / ora"},
+                    {"category": "Business Jet (BIZJET)", "crew": "2 Piloti + 1 Assistente di Volo", "rate": "€ 240.00 / ora"},
+                    {"category": "Airliner (AIRLINER)", "crew": "2 Piloti + 4 Assistenti di Volo", "rate": "€ 520.00 / ora"}
                 ]
             },
             "wear_and_maintenance_rules": {

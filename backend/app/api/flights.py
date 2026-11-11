@@ -10,7 +10,7 @@ from app.models.schema import Aircraft, Job, FlightLog, Company
 from app.services.flight_tracker import flight_tracker
 from app.services.xp_connector import xp_connector
 from app.services.dealerships import DealershipService
-from app.services.economy import EconomyService
+from app.services.economy import EconomyService, CATEGORY_SPECS
 
 router = APIRouter(prefix="/flights", tags=["Flights"])
 
@@ -19,10 +19,12 @@ MAX_AIRPORT_RADIUS_NM = 5.0
 class StartFlightRequest(BaseModel):
     aircraft_id: int
     job_id: Optional[int] = None
+    exclude_crew_cost: Optional[bool] = None
 
 class FinalizeFlightRequest(BaseModel):
     actual_arrival_icao: Optional[str] = None
     diversion_reason: Optional[str] = None
+    exclude_crew_cost: Optional[bool] = None
 
 async def _resolve_active_job(db: AsyncSession, aircraft_id: Optional[int]) -> Optional[Job]:
     if flight_tracker.active_job_id:
@@ -71,11 +73,26 @@ async def get_active_flight(
     at_origin = (orig_dist is not None and orig_dist <= MAX_AIRPORT_RADIUS_NM)
     at_destination = (dest_dist is not None and dest_dist <= MAX_AIRPORT_RADIUS_NM)
 
+    cat_key = (aircraft.category if aircraft else "GA") or "GA"
+    cat_specs = CATEGORY_SPECS.get(cat_key, CATEGORY_SPECS["GA"])
+    effective_exclude_crew = (
+        flight_tracker.exclude_crew_cost
+        if flight_tracker.active_aircraft_id is not None
+        else bool(job.exclude_crew_cost if job else False)
+    )
+
     return {
         "is_active": flight_tracker.active_aircraft_id is not None,
         "phase": flight_tracker.phase,
         "aircraft": aircraft,
         "job": job,
+        "exclude_crew_cost": effective_exclude_crew,
+        "crew_spec": {
+            "label": cat_specs.get("crew_label", "1 Pilota"),
+            "hourly_rate_eur": cat_specs.get("crew_hourly_rate_eur", 90.0),
+            "pilots_count": cat_specs.get("pilots_count", 1),
+            "attendants_count": cat_specs.get("attendants_count", 0),
+        },
         "start_fuel_kg": flight_tracker.start_fuel_kg,
         "current_fuel_kg": flight_tracker.current_fuel_kg,
         "max_g": flight_tracker.max_g,
@@ -182,9 +199,16 @@ async def start_flight(req: StartFlightRequest, db: AsyncSession = Depends(get_d
     if job:
         job.status = "IN_PROGRESS"
         job.aircraft_id = aircraft.id
+    exclude_crew = (
+        bool(req.exclude_crew_cost)
+        if req.exclude_crew_cost is not None
+        else bool(job.exclude_crew_cost if job else False)
+    )
+    if job and req.exclude_crew_cost is not None:
+        job.exclude_crew_cost = exclude_crew
     await db.commit()
     
-    flight_tracker.start_flight(aircraft.id, job.id if job else None)
+    flight_tracker.start_flight(aircraft.id, job.id if job else None, exclude_crew_cost=exclude_crew)
     
     # Se X-Plane riportava serbatoio vuoto (0 kg), ripristina quello salvato in SkyOps
     if xp_fuel <= 0.5 and aircraft.fuel_quantity_kg > 0:
@@ -247,7 +271,8 @@ async def finalize_flight(
 
     summary = await flight_tracker.finalize_flight(
         actual_arrival_icao=actual_arr,
-        diversion_reason=(req.diversion_reason if req else None)
+        diversion_reason=(req.diversion_reason if req else None),
+        exclude_crew_cost=(req.exclude_crew_cost if req else None)
     )
     if not summary:
         raise HTTPException(status_code=500, detail="Errore durante la chiusura del volo.")

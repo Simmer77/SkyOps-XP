@@ -30,11 +30,12 @@ class FlightTracker:
         self.touchdown_g: Optional[float] = None
         self.touchdown_rating: Optional[str] = None
         self.was_in_air: bool = False
+        self.exclude_crew_cost: bool = False
         
         self.loop_task: Optional[asyncio.Task] = None
         self.last_failure_check = 0.0
 
-    def start_flight(self, aircraft_id: int, job_id: Optional[int] = None):
+    def start_flight(self, aircraft_id: int, job_id: Optional[int] = None, exclude_crew_cost: bool = False):
         """Initializes a new tracked flight session"""
         self.active_aircraft_id = aircraft_id
         self.active_job_id = job_id
@@ -46,6 +47,7 @@ class FlightTracker:
         self.touchdown_g = None
         self.touchdown_rating = None
         self.was_in_air = False
+        self.exclude_crew_cost = bool(exclude_crew_cost)
         
         t = xp_connector.telemetry
         self.start_fuel_kg = t.get("fuel_total_kg", 0.0)
@@ -119,7 +121,8 @@ class FlightTracker:
     async def finalize_flight(
         self,
         actual_arrival_icao: Optional[str] = None,
-        diversion_reason: Optional[str] = None
+        diversion_reason: Optional[str] = None,
+        exclude_crew_cost: Optional[bool] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Finalizes active flight, saves records to DB, applies wear & finances.
@@ -162,6 +165,11 @@ class FlightTracker:
             # 2. Financial calculation
             job_reward = job.reward_usd if job else 0.0
             is_leased = (aircraft.ownership == "LEASED")
+            effective_exclude_crew = (
+                bool(exclude_crew_cost)
+                if exclude_crew_cost is not None
+                else bool(self.exclude_crew_cost or (job and getattr(job, "exclude_crew_cost", False)))
+            )
             financials = EconomyService.calculate_flight_financials(
                 category=aircraft.category,
                 fuel_burned_kg=fuel_burned,
@@ -169,7 +177,8 @@ class FlightTracker:
                 job_reward=job_reward,
                 is_leased=is_leased,
                 lease_rate_hourly=aircraft.hourly_lease_rate,
-                is_home_base=is_home_base
+                is_home_base=is_home_base,
+                exclude_crew_cost=effective_exclude_crew
             )
             
             # 3. Calculate and apply wear
@@ -220,6 +229,7 @@ class FlightTracker:
                 fuel_cost_usd=financials["fuel_cost"],
                 landing_fee_usd=financials["landing_fee"],
                 lease_cost_usd=financials["lease_cost"],
+                crew_cost_usd=financials["crew_cost"],
                 net_profit_usd=financials["net_profit"],
                 notes=diversion_note,
                 status="COMPLETED"
@@ -283,6 +293,17 @@ class FlightTracker:
                     flight_id=log.id,
                     company=company
                 )
+            if financials["crew_cost"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="CREW",
+                    title=f"Equipaggio Volo {log.flight_number} ({financials['crew_label']})",
+                    amount_eur=-financials["crew_cost"],
+                    description=f"Personale di bordo ({duration_hours:.2f} ore a € {financials['crew_hourly_rate_eur']:.0f}/h) su {aircraft.tail_number}",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
 
             await session.commit()
             
@@ -310,6 +331,7 @@ class FlightTracker:
             self.phase = "OFFLINE"
             self.active_aircraft_id = None
             self.active_job_id = None
+            self.exclude_crew_cost = False
             return result
 
 flight_tracker = FlightTracker()

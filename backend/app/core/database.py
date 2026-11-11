@@ -51,3 +51,13 @@ async def init_db():
                 await conn.execute(text(f"ALTER TABLE company ADD COLUMN {col_name} {col_type}"))
             except Exception:
                 pass
+
+        extra_migrations = [
+            ("jobs", "exclude_crew_cost", "BOOLEAN DEFAULT 0"),
+            ("flight_logs", "crew_cost_usd", "FLOAT DEFAULT 0.0"),
+        ]
+        for table_name, col_name, col_type in extra_migrations:
+            try:
+                await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+            except Exception:
+                pass
