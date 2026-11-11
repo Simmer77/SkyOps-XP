@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plane, Gauge, Briefcase, Wrench, BookOpen, Radio, 
   Fuel, AlertTriangle, CheckCircle, ArrowRight, RefreshCw, 
-  MapPin, Zap, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock,
+  MapPin, Zap, Shield, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock,
   Edit3, Camera, Calendar, Cpu, DollarSign, TrendingUp, TrendingDown,
   ArrowUpRight, ArrowDownRight, Wallet, FileText, Filter
 } from 'lucide-react';
@@ -21,6 +21,7 @@ export default function App() {
   const [financialOverview, setFinancialOverview] = useState(null);
   const [financialLedger, setFinancialLedger] = useState([]);
   const [financeSubTab, setFinanceSubTab] = useState('overview'); // 'overview', 'ledger', 'rules'
+  const [financePeriodFilter, setFinancePeriodFilter] = useState('ALL'); // 'ALL' | 'YYYY-MM'
   const [ledgerCategoryFilter, setLedgerCategoryFilter] = useState('ALL');
   const [flightHistory, setFlightHistory] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -144,6 +145,16 @@ export default function App() {
     }
   };
 
+  const formatOperatingMonth = (ymStr, short = false) => {
+    if (!ymStr || !ymStr.includes('-')) return '';
+    const full = ['', 'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+    const abbr = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+    const [y, m] = ymStr.split('-');
+    const idx = parseInt(m, 10);
+    if (!idx || idx < 1 || idx > 12) return ymStr;
+    return `${short ? abbr[idx] : full[idx]} ${y}`;
+  };
+
   // 1. Initial Load & Fetchers
   const fetchStatus = async () => {
     try {
@@ -151,6 +162,12 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setSystemStatus(data);
+        if (data.recently_closed_months && data.recently_closed_months.length > 0) {
+          const closedLabels = data.recently_closed_months.map(m => `${m.label} (-${formatEuro(m.total_deductions_eur)})`).join(', ');
+          showNotice(`Chiusura mensile automatica registrata: ${closedLabels}`, 'info');
+          fetchFleet();
+          fetchFinances();
+        }
         if (data.xp12_detected_path) {
           setProfileForm(prev => ({
             ...prev,
@@ -261,11 +278,14 @@ export default function App() {
     }
   };
 
-  const fetchFinances = async () => {
+  const fetchFinances = async (periodOverride = null) => {
     try {
+      const period = periodOverride ?? financePeriodFilter;
+      const monthParam = period && period !== 'ALL' ? `?month=${encodeURIComponent(period)}` : '';
+      const ledgerMonthParam = period && period !== 'ALL' ? `&month=${encodeURIComponent(period)}` : '';
       const [resOverview, resLedger] = await Promise.all([
-        fetch('/api/finances/overview'),
-        fetch('/api/finances/ledger?limit=150')
+        fetch(`/api/finances/overview${monthParam}`),
+        fetch(`/api/finances/ledger?limit=150${ledgerMonthParam}`)
       ]);
       if (resOverview.ok) {
         const data = await resOverview.json();
@@ -280,26 +300,24 @@ export default function App() {
     }
   };
 
-  const handleAdvanceTime = async (days = 7) => {
+  const handlePayoffAircraftDebt = async (aircraft) => {
+    if (!aircraft) return;
+    const debt = aircraft.financed_amount_remaining_eur || 0;
+    if (!confirm(`Vuoi estinguere anticipatamente il debito residuo di ${formatEuro(debt)} per ${aircraft.tail_number} (${aircraft.name})?`)) {
+      return;
+    }
     setLoading(true);
     try {
-      const res = await fetch('/api/finances/advance_time', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days })
-      });
+      const res = await fetch(`/api/fleet/${aircraft.id}/payoff`, { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
-        const deductions = data.data.total_deductions_eur;
-        showNotice(`Avanzamento a Giorno ${data.data.new_day} (+${days} gg) completato! Oneri fissi dedotti: ${formatEuro(deductions)}`, 'success');
-        fetchStatus();
-        fetchFleet();
-        fetchFinances();
+        showNotice(data.message, 'success');
+        await Promise.all([fetchStatus(), fetchFleet(), fetchFinances()]);
       } else {
-        showNotice(data.detail || 'Errore durante l avanzamento temporale', 'error');
+        showNotice(data.detail || 'Errore estinzione anticipata', 'error');
       }
     } catch (e) {
-      showNotice('Errore durante l avanzamento temporale', 'error');
+      showNotice('Errore di rete durante estinzione debito', 'error');
     } finally {
       setLoading(false);
     }
@@ -1212,22 +1230,20 @@ export default function App() {
               </div>
             </div>
 
-            {/* Operating Day & Virtual Calendar Widget */}
+            {/* Operating Month & Real Calendar Widget */}
             <div 
               onClick={() => setActiveTab('finances')}
               className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 hover:border-amber-500/50 cursor-pointer px-3 py-1.5 rounded-lg transition"
-              title="Clicca per aprire la gestione del Bilancio e del Tempo Operativo"
+              title="Clicca per aprire Bilancio, Mese Operativo e Oneri Mensili"
             >
               <Calendar size={16} className="text-amber-400" />
               <div>
-                <div className="text-[10px] text-slate-400 uppercase font-mono">Giorno Operativo</div>
+                <div className="text-[10px] text-slate-400 uppercase font-mono">Mese Operativo</div>
                 <div className="text-sm font-bold font-mono text-amber-300">
-                  Giorno {systemStatus?.company?.operating_day ?? (financialOverview?.operating_day || 1)}
-                  {systemStatus?.company?.virtual_date && (
-                    <span className="text-[11px] text-slate-400 font-normal ml-1.5">
-                      ({formatVirtualDate(systemStatus?.company?.virtual_date)})
-                    </span>
-                  )}
+                  {systemStatus?.company?.operating_month_label || financialOverview?.operating_month_label || formatOperatingMonth(new Date().toISOString().slice(0, 7))}
+                  <span className="text-[11px] text-slate-400 font-normal ml-1.5">
+                    ({formatVirtualDate(systemStatus?.company?.virtual_date || new Date().toISOString())})
+                  </span>
                 </div>
               </div>
             </div>
@@ -1934,13 +1950,24 @@ export default function App() {
                             {selectedAircraft.category}
                           </span>
                         </div>
-                        {selectedAircraft.remaining_payments_weeks > 0 ? (
-                          <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                            {selectedAircraft.acquisition_mode === 'FINANCIAL_LEASE' ? 'LEASING FINANZIARIO' : 'MUTUO BANCARIO'} • {formatEuro(selectedAircraft.weekly_payment_eur)}/sett ({selectedAircraft.remaining_payments_weeks} sett.)
-                          </span>
+                        {(selectedAircraft.remaining_payments_months > 0 || selectedAircraft.financed_amount_remaining_eur > 0) ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              {selectedAircraft.acquisition_mode === 'FINANCIAL_LEASE' ? 'LEASING FINANZIARIO' : 'MUTUO BANCARIO'} • {formatEuro(selectedAircraft.monthly_payment_eur || 0)}/mese ({selectedAircraft.remaining_payments_months || 0} mesi • Debito {formatEuro(selectedAircraft.financed_amount_remaining_eur || 0)})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handlePayoffAircraftDebt(selectedAircraft)}
+                              disabled={loading}
+                              className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 transition disabled:opacity-50"
+                              title="Salda subito l'intero capitale residuo e azzera le rate mensili"
+                            >
+                              💳 Estingui Debito ({formatEuro(selectedAircraft.financed_amount_remaining_eur || 0)})
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            DI PROPRIETÀ (CASH)
+                            {selectedAircraft.ownership === 'LEASED' ? 'NOLEGGIO ORARIO' : 'DI PROPRIETÀ (CASH)'}
                           </span>
                         )}
                       </div>
@@ -2798,7 +2825,7 @@ export default function App() {
                     title: 'Noleggio Orario (Dry Lease)',
                     badge: 'Zero Anticipo',
                     down: 0,
-                    weekly: 0,
+                    monthly: 0,
                     sub: `Tariffa volo: ${formatEuro(selectedMarketItem.hourly_lease_rate_eur)} / ora • Riconsegna libera quando vuoi`
                   },
                   {
@@ -2806,24 +2833,24 @@ export default function App() {
                     title: 'Acquisto Immediato (Cash)',
                     badge: '100% Proprietà',
                     down: opts.cash.down_payment_eur,
-                    weekly: 0,
-                    sub: 'Proprietà immediata e totale • Nessuna rata settimanale'
+                    monthly: 0,
+                    sub: 'Proprietà immediata e totale • Nessuna rata mensile'
                   },
                   {
                     id: 'FINANCIAL_LEASE',
-                    title: 'Leasing Finanziario (52 Settimane)',
+                    title: 'Leasing Finanziario (12 Mesi)',
                     badge: 'Anticipo 20%',
                     down: opts.financial_lease.down_payment_eur,
-                    weekly: opts.financial_lease.weekly_eur,
-                    sub: `52 rate da ${formatEuro(opts.financial_lease.weekly_eur)}/sett • Riscatto finale automatico`
+                    monthly: opts.financial_lease.monthly_eur,
+                    sub: `12 rate mensili da ${formatEuro(opts.financial_lease.monthly_eur)}/mese • Riscatto automatico`
                   },
                   {
                     id: 'FINANCED_LOAN',
-                    title: 'Mutuo Bancario (104 Settimane)',
+                    title: 'Mutuo Bancario (24 Mesi)',
                     badge: 'Anticipo 10%',
                     down: opts.bank_loan.down_payment_eur,
-                    weekly: opts.bank_loan.weekly_eur,
-                    sub: `104 rate da ${formatEuro(opts.bank_loan.weekly_eur)}/sett • Rate minime per massima liquidità`
+                    monthly: opts.bank_loan.monthly_eur,
+                    sub: `24 rate mensili da ${formatEuro(opts.bank_loan.monthly_eur)}/mese • Rate leggere per liquidità`
                   }
                 ];
                 const currentModeObj = modes.find(m => m.id === acquireMode) || modes[0];
@@ -3724,7 +3751,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* HERO BANNER: GESTIONE GIORNO OPERATIVO & DILATAZIONE TEMPO */}
+            {/* HERO BANNER: MESE OPERATIVO & CALENDARIO REALE */}
             <div className="glass-panel p-5 rounded-xl border border-amber-500/30 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-amber-950/20 shadow-xl relative overflow-hidden">
               <div className="absolute top-0 right-0 -mr-16 -mt-16 w-56 h-56 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
               
@@ -3732,77 +3759,102 @@ export default function App() {
                 <div className="lg:col-span-7 space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1">
-                      <Clock size={11} /> Ciclo Temporale Ibrido
+                      <Clock size={11} /> Calendario Reale Mensile
                     </span>
                     <span className="text-xs text-slate-400 font-mono">
-                      1 Giorno Reale ≈ 1 Settimana Simulata
+                      1 Mese Reale = 1 Mese Operativo
                     </span>
                   </div>
 
                   <div className="flex flex-wrap items-baseline gap-3">
                     <span className="text-3xl font-black text-white font-mono tracking-tight">
-                      Giorno Operativo {financialOverview?.operating_day ?? 1}
-                    </span>
-                    <span className="text-sm font-semibold text-amber-300 font-mono bg-amber-500/10 px-2.5 py-1 rounded border border-amber-500/20">
-                      Settimana {Math.ceil((financialOverview?.operating_day ?? 1) / 7)}
+                      Mese Operativo: {financialOverview?.operating_month_label || systemStatus?.company?.operating_month_label || formatOperatingMonth(new Date().toISOString().slice(0, 7))}
                     </span>
                   </div>
 
                   <p className="text-xs text-slate-300 font-mono flex items-center gap-1.5">
                     <Calendar size={13} className="text-cyan-400" />
-                    Data Fiscale Virtuale: <strong className="text-white">{formatVirtualDate(financialOverview?.virtual_date)}</strong>
+                    Data Reale di Sistema: <strong className="text-white">{formatVirtualDate(financialOverview?.virtual_date || new Date().toISOString())}</strong>
                   </p>
 
                   <p className="text-xs text-slate-400 font-sans leading-relaxed pt-1">
-                    I costi fissi di gestione (rimessaggio hangar e assicurazioni flotta) maturano con il trascorrere delle settimane operative. Non voli per qualche giorno reale? Nessun problema: il tempo avanza solo quando effettui missioni o quando avanzi manualmente il ciclo aziendale.
+                    I costi fissi di gestione (hangar, assicurazioni e rate mensili) sono addebitati automaticamente una sola volta per ogni mese reale trascorso, indipendentemente dal fatto che tu faccia 1 o 100 voli nel mese. Le assenze di più mesi reali maturano tutti i mesi trascorsi.
                   </p>
                 </div>
 
-                {/* Right side: Fixed Cost Projections & Advance Actions */}
+                {/* Right side: Monthly Fixed Cost Projections */}
                 <div className="lg:col-span-5 bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-3">
                   <div className="flex justify-between items-center text-xs font-mono">
                     <span className="text-slate-400 flex items-center gap-1.5">
-                      <Fuel size={13} className="text-amber-400" /> Oneri Fissi Prossimo Ciclo (+7 gg):
+                      <Fuel size={13} className="text-amber-400" /> Chiusura Mensile ({financialOverview?.operating_month_label || 'Mese Corrente'}):
                     </span>
                     <span className="font-bold text-rose-400 text-sm">
-                      {formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_fixed_eur || 0)}
+                      {formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_fixed_eur || 0)}
                     </span>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 text-[11px] font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80">
                     <div>
-                      <span className="text-slate-400 block">Hangar:</span>
-                      <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_hangar_eur || 0)}</span>
+                      <span className="text-slate-400 block">Hangar/Mese:</span>
+                      <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_hangar_eur || 0)}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Assicurazioni:</span>
-                      <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_insurance_eur || 0)}</span>
+                      <span className="text-slate-400 block">Assic./Mese:</span>
+                      <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_insurance_eur || 0)}</span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block">Rate/Leasing:</span>
-                      <span className="text-amber-300 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_7d?.total_financing_eur || 0)}</span>
+                      <span className="text-slate-400 block">Rate/Mese:</span>
+                      <span className="text-amber-300 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_financing_eur || 0)}</span>
                     </div>
                   </div>
 
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleAdvanceTime(7)}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-bold text-xs font-mono shadow-md transition disabled:opacity-50"
-                    >
-                      <Calendar size={14} /> Avanza Settimana (+7 gg)
-                    </button>
-                    <button
-                      onClick={() => handleAdvanceTime(1)}
-                      disabled={loading}
-                      className="py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs border border-slate-700 transition disabled:opacity-50"
-                      title="Avanza solo 1 giorno per piccoli aggiustamenti"
-                    >
-                      +1 Giorno
-                    </button>
+                  <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between pt-1">
+                    <span>Flotta di proprietà attiva: <strong className="text-white">{financialOverview?.upcoming_fixed_costs_monthly?.owned_aircraft_count ?? 0}</strong></span>
+                    <span className="text-emerald-400">● Addebito automatico a cambio mese</span>
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Period Filter Selector (Storico vs Mese Operativo) */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800 font-mono text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-slate-400 flex items-center gap-1 mr-1">
+                  <Calendar size={13} className="text-cyan-400" /> Periodo Conto Economico:
+                </span>
+                <button
+                  onClick={() => {
+                    setFinancePeriodFilter('ALL');
+                    fetchFinances('ALL');
+                  }}
+                  className={`px-3 py-1 rounded-lg transition ${
+                    financePeriodFilter === 'ALL'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                      : 'bg-slate-800/70 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Storico Totale
+                </button>
+                {(financialOverview?.available_months || []).map((m) => (
+                  <button
+                    key={m.ym}
+                    onClick={() => {
+                      setFinancePeriodFilter(m.ym);
+                      fetchFinances(m.ym);
+                    }}
+                    className={`px-3 py-1 rounded-lg transition ${
+                      financePeriodFilter === m.ym
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                        : 'bg-slate-800/70 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-slate-400">
+                Vista attiva: <strong className="text-white">{financePeriodFilter === 'ALL' ? 'Storico Completo' : formatOperatingMonth(financePeriodFilter)}</strong>
+              </span>
             </div>
 
             {/* SUB-VIEW 1: QUADRO GENERALE & BILANCIO (P&L + STATO PATRIMONIALE) */}
@@ -3878,7 +3930,7 @@ export default function App() {
                           <FileText size={16} className="text-cyan-400" /> Stato Patrimoniale (Asset & Flotta)
                         </h3>
                         <p className="text-[11px] text-slate-400 font-mono mt-0.5">
-                          Consistenza patrimoniale societaria al Giorno {financialOverview?.operating_day ?? 1}
+                          Consistenza patrimoniale societaria • {financialOverview?.operating_month_label || 'Mese Corrente'}
                         </p>
                       </div>
                       <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
@@ -4099,6 +4151,7 @@ export default function App() {
                       { id: 'LEASE', label: 'Noleggi' },
                       { id: 'FIXED_HANGAR', label: 'Hangar' },
                       { id: 'FIXED_INSURANCE', label: 'Assicurazioni' },
+                      { id: 'FINANCING', label: 'Rate/Mutui' },
                     ].map((btn) => (
                       <button
                         key={btn.id}
@@ -4128,7 +4181,7 @@ export default function App() {
                     <table className="w-full text-left font-mono text-xs">
                       <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
                         <tr>
-                          <th className="p-3">Giorno / Data</th>
+                          <th className="p-3">Mese / Data</th>
                           <th className="p-3">Categoria</th>
                           <th className="p-3">Velivolo</th>
                           <th className="p-3">Descrizione / Causale Operazione</th>
@@ -4142,7 +4195,9 @@ export default function App() {
                           .map((tx) => (
                             <tr key={tx.id} className="hover:bg-slate-800/30 transition">
                               <td className="p-3 text-slate-400 whitespace-nowrap">
-                                <span className="font-bold text-amber-300/90">Giorno {tx.operating_day || 1}</span>
+                                <span className="font-bold text-amber-300/90">
+                                  {tx.operating_month ? formatOperatingMonth(tx.operating_month, true) : formatOperatingMonth(new Date(tx.timestamp).toISOString().slice(0, 7), true)}
+                                </span>
                                 <span className="text-[10px] block text-slate-500">
                                   {new Date(tx.timestamp).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}
                                 </span>
@@ -4315,6 +4370,29 @@ export default function App() {
                             <div className="font-bold text-indigo-300">{cat.category}</div>
                             <div className="text-slate-300 mt-1">{cat.crew}</div>
                             <div className="text-emerald-400 font-bold mt-1">{cat.rate}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 6. Monthly Fixed Costs Rules */}
+                {financialGuide.fixed_costs_rules && (
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex items-center gap-2 text-amber-400 font-bold text-sm font-mono">
+                      <Calendar size={16} /> 6. MESE OPERATIVO REALE & COSTI FISSI MENSILI
+                    </div>
+                    <div className="text-xs text-slate-300 font-mono leading-relaxed">
+                      <div className="font-bold text-white mb-1">{financialGuide.fixed_costs_rules.formula}</div>
+                      <p className="text-slate-400 mb-3">{financialGuide.fixed_costs_rules.notes}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {financialGuide.fixed_costs_rules.categories.map((cat, idx) => (
+                          <div key={idx} className="bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                            <div className="font-bold text-amber-300">{cat.category}</div>
+                            <div className="text-slate-400 mt-1">Hangar: <span className="text-white">{cat.hangar}</span></div>
+                            <div className="text-slate-400">Assicurazione: <span className="text-white">{cat.insurance}</span></div>
+                            <div className="text-rose-400 font-bold mt-2">Totale: {cat.total}</div>
                           </div>
                         ))}
                       </div>

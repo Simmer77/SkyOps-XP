@@ -21,9 +21,11 @@ class FailureInjectRequest(BaseModel):
 
 @router.get("/status")
 async def get_system_status(db: AsyncSession = Depends(get_db)):
+    sync_info = await EconomyService.sync_operating_months(db)
     comp_res = await db.execute(select(Company).limit(1))
     company = comp_res.scalars().first()
     detected_xp = XP12ScannerService.detect_xp12_path() or ""
+    op_month = (company.operating_month or EconomyService.current_ym()) if company else EconomyService.current_ym()
     
     return {
         "has_profile": company is not None,
@@ -34,6 +36,7 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
         "xp_ip": xp_connector.xp_ip,
         "xp_port": xp_connector.xp_port,
         "active_flight_phase": flight_tracker.phase,
+        "recently_closed_months": sync_info.get("closed_months", []),
         "company": {
             "name": company.name,
             "home_base_icao": company.home_base_icao or "LIRN",
@@ -42,6 +45,8 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
             "cash_balance": company.cash_balance,
             "reputation": company.reputation,
             "operating_day": company.operating_day or 1,
+            "operating_month": op_month,
+            "operating_month_label": EconomyService.format_operating_month_it(op_month),
             "virtual_date": company.virtual_date.isoformat() if company.virtual_date else None,
             "simbrief_username": company.simbrief_username or "",
             "simbrief_pilot_id": company.simbrief_pilot_id or "",

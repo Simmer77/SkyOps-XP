@@ -55,9 +55,30 @@ async def init_db():
         extra_migrations = [
             ("jobs", "exclude_crew_cost", "BOOLEAN DEFAULT 0"),
             ("flight_logs", "crew_cost_usd", "FLOAT DEFAULT 0.0"),
+            ("company", "operating_month", "TEXT DEFAULT ''"),
+            ("aircraft", "monthly_payment_eur", "FLOAT DEFAULT 0.0"),
+            ("aircraft", "remaining_payments_months", "INTEGER DEFAULT 0"),
+            ("financial_transactions", "operating_month", "TEXT DEFAULT ''"),
         ]
         for table_name, col_name, col_type in extra_migrations:
             try:
                 await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
             except Exception:
                 pass
+
+        # Backfill operating_month and monthly financing fields on existing rows safely
+        from datetime import datetime, timezone
+        curr_ym = datetime.now(timezone.utc).strftime("%Y-%m")
+        try:
+            await conn.execute(text(f"UPDATE company SET operating_month = '{curr_ym}' WHERE operating_month IS NULL OR operating_month = ''"))
+            await conn.execute(text("UPDATE financial_transactions SET operating_month = strftime('%Y-%m', timestamp) WHERE (operating_month IS NULL OR operating_month = '') AND timestamp IS NOT NULL"))
+            await conn.execute(text(f"UPDATE financial_transactions SET operating_month = '{curr_ym}' WHERE operating_month IS NULL OR operating_month = ''"))
+            await conn.execute(text(
+                "UPDATE aircraft SET "
+                "remaining_payments_months = CASE WHEN remaining_payments_weeks > 0 THEN MAX(1, CAST(ROUND(remaining_payments_weeks / 4.33) AS INTEGER)) ELSE 0 END, "
+                "monthly_payment_eur = CASE WHEN remaining_payments_weeks > 0 THEN ROUND(financed_amount_remaining_eur / MAX(1, CAST(ROUND(remaining_payments_weeks / 4.33) AS INTEGER)), 2) ELSE 0.0 END, "
+                "remaining_payments_weeks = 0 "
+                "WHERE remaining_payments_weeks > 0 AND (remaining_payments_months IS NULL OR remaining_payments_months = 0)"
+            ))
+        except Exception:
+            pass

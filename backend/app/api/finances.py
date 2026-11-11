@@ -17,18 +17,22 @@ class AdvanceTimeRequest(BaseModel):
     days: int = 7
 
 @router.get("/overview")
-async def get_financial_overview(db: AsyncSession = Depends(get_db)):
+async def get_financial_overview(
+    month: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Restituisce il rendiconto economico completo:
-    Stato Patrimoniale, Conto Economico (P&L), Giorno Operativo e stima costi futuri.
+    Restituisce il rendiconto economico completo (Mese Operativo Reale):
+    Stato Patrimoniale, Conto Economico (P&L) mensile o storico, e previsione oneri mensili.
     """
-    statement = await EconomyService.get_financial_statement(db)
+    statement = await EconomyService.get_financial_statement(db, month_filter=month)
     return statement
 
 @router.get("/ledger")
 async def get_financial_ledger(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=150, ge=1, le=500),
     category: Optional[str] = Query(default=None),
+    month: Optional[str] = Query(default=None),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -37,33 +41,28 @@ async def get_financial_ledger(
     query = select(FinancialTransaction).order_by(desc(FinancialTransaction.id))
     if category and category != "ALL":
         query = query.where(FinancialTransaction.category == category)
+    if month and month != "ALL":
+        query = query.where(FinancialTransaction.operating_month == month)
         
     query = query.limit(limit)
     res = await db.execute(query)
     transactions = res.scalars().all()
     return transactions
 
-@router.post("/advance_time")
-async def advance_operating_cycle(req: AdvanceTimeRequest, db: AsyncSession = Depends(get_db)):
+@router.post("/sync_month")
+async def sync_operating_month(db: AsyncSession = Depends(get_db)):
     """
-    Simula il passaggio del tempo virtuale (es. 1 settimana / +7 giorni).
-    Calcola e addebita i costi fissi (hangaraggio e polizze assicurative) per tutti
-    gli aeromobili di proprietà registrati in flotta.
+    Sincronizza il Mese Operativo con il calendario reale di sistema e addebita eventuali mesi trascorsi.
     """
-    if req.days < 1 or req.days > 90:
-        raise HTTPException(status_code=400, detail="L'avanzamento deve essere compreso tra 1 e 90 giorni.")
-        
-    result = await EconomyService.advance_operating_cycle(db, days=req.days)
+    result = await EconomyService.sync_operating_months(db)
     return {
         "status": "success",
-        "message": f"Tempo operativo avanzato con successo di {req.days} giorni (Giorno {result['new_day']}).",
         "data": result
     }
 
 @router.get("/projections")
-async def get_projected_costs(days: int = Query(default=7, ge=1, le=90), db: AsyncSession = Depends(get_db)):
+async def get_projected_costs(db: AsyncSession = Depends(get_db)):
     """
-    Restituisce la stima dei costi fissi per il prossimo ciclo operativo indicato.
+    Restituisce il dettaglio previsto dei costi fissi mensili per tutta la flotta di proprietà.
     """
-    projections = await EconomyService.get_projected_fixed_costs(db, days=days)
-    return projections
+    return await EconomyService.get_projected_monthly_fixed_costs(db)

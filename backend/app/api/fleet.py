@@ -164,15 +164,15 @@ async def get_synced_market(db: AsyncSession = Depends(get_db)):
     enriched = []
     for m in items:
         price = m.purchase_price_eur or 0.0
-        # Financial lease: 20% down, rest +4% interest over 52 weeks
+        # Financial lease: 20% down, rest +4% interest over 12 months
         lease_down = round(price * 0.20, 2)
         lease_total_financed = round(price * 0.80 * 1.04, 2)
-        lease_weekly = round(lease_total_financed / 52.0, 2)
+        lease_monthly = round(lease_total_financed / 12.0, 2)
         
-        # Bank loan: 10% down, rest +6% interest over 104 weeks
+        # Bank loan: 10% down, rest +6% interest over 24 months
         loan_down = round(price * 0.10, 2)
         loan_total_financed = round(price * 0.90 * 1.06, 2)
-        loan_weekly = round(loan_total_financed / 104.0, 2)
+        loan_monthly = round(loan_total_financed / 24.0, 2)
         
         delivery_info = DealershipService.get_dealership_for_aircraft(
             manufacturer=m.manufacturer,
@@ -206,9 +206,9 @@ async def get_synced_market(db: AsyncSession = Depends(get_db)):
             "description": m.description,
             "delivery_info": delivery_info,
             "financing_options": {
-                "cash": {"down_payment_eur": price, "weekly_eur": 0.0, "weeks": 0},
-                "financial_lease": {"down_payment_eur": lease_down, "weekly_eur": lease_weekly, "weeks": 52, "total_financed_eur": lease_total_financed},
-                "bank_loan": {"down_payment_eur": loan_down, "weekly_eur": loan_weekly, "weeks": 104, "total_financed_eur": loan_total_financed},
+                "cash": {"down_payment_eur": price, "monthly_eur": 0.0, "months": 0},
+                "financial_lease": {"down_payment_eur": lease_down, "monthly_eur": lease_monthly, "months": 12, "total_financed_eur": lease_total_financed},
+                "bank_loan": {"down_payment_eur": loan_down, "monthly_eur": loan_monthly, "months": 24, "total_financed_eur": loan_total_financed},
                 "rental_hourly": {"down_payment_eur": 0.0, "hourly_eur": m.hourly_lease_rate_eur}
             }
         })
@@ -242,8 +242,8 @@ async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession 
     price = m.purchase_price_eur or 0.0
     
     down_payment = 0.0
-    weekly_payment = 0.0
-    remaining_weeks = 0
+    monthly_payment = 0.0
+    remaining_months = 0
     financed_remaining = 0.0
     ownership = "OWNED"
     hourly_rate = 0.0
@@ -258,13 +258,13 @@ async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession 
     elif mode == "FINANCIAL_LEASE":
         down_payment = round(price * 0.20, 2)
         financed_remaining = round(price * 0.80 * 1.04, 2)
-        remaining_weeks = 52
-        weekly_payment = round(financed_remaining / 52.0, 2)
+        remaining_months = 12
+        monthly_payment = round(financed_remaining / 12.0, 2)
     elif mode == "FINANCED_LOAN":
         down_payment = round(price * 0.10, 2)
         financed_remaining = round(price * 0.90 * 1.06, 2)
-        remaining_weeks = 104
-        weekly_payment = round(financed_remaining / 104.0, 2)
+        remaining_months = 24
+        monthly_payment = round(financed_remaining / 24.0, 2)
     else:
         raise HTTPException(status_code=400, detail="Modalità di acquisizione non valida.")
 
@@ -354,8 +354,8 @@ async def acquire_market_aircraft(req: AcquireAircraftRequest, db: AsyncSession 
         health_airframe_pct=min(100.0, cond + 1.5),
         health_avionics_pct=min(100.0, cond + 2.0),
         acquisition_mode=mode,
-        weekly_payment_eur=weekly_payment,
-        remaining_payments_weeks=remaining_weeks,
+        monthly_payment_eur=monthly_payment,
+        remaining_payments_months=remaining_months,
         financed_amount_remaining_eur=financed_remaining,
         hourly_lease_rate=hourly_rate
     )
@@ -684,4 +684,55 @@ async def perform_service(aircraft_id: int, req: ServiceRequest, db: AsyncSessio
             "airframe": aircraft.health_airframe_pct,
             "avionics": aircraft.health_avionics_pct
         }
+    }
+
+@router.post("/{aircraft_id}/payoff")
+async def payoff_aircraft_debt(aircraft_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Consente l'estinzione anticipata del mutuo o leasing finanziario residuo sull'aeromobile.
+    """
+    aircraft = await db.get(Aircraft, aircraft_id)
+    if not aircraft:
+        raise HTTPException(status_code=404, detail="Aeromobile non trovato.")
+    if aircraft.ownership != "OWNED":
+        raise HTTPException(status_code=400, detail="Solo gli aeromobili di proprietà possono estinguere un finanziamento.")
+
+    remaining_debt = round(aircraft.financed_amount_remaining_eur or 0.0, 2)
+    if remaining_debt <= 0 or (aircraft.remaining_payments_months or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Questo aeromobile non ha rate o debiti residui da saldare.")
+
+    comp_res = await db.execute(select(Company).limit(1))
+    company = comp_res.scalars().first()
+    if not company:
+        raise HTTPException(status_code=400, detail="Profilo aziendale non attivo.")
+
+    if company.cash_balance < remaining_debt:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Fondi insufficienti per saldare il debito residuo (€ {remaining_debt:,.2f} richiesti vs € {company.cash_balance:,.2f} disponibili)."
+        )
+
+    mode_label = "Leasing Finanziario" if aircraft.acquisition_mode == "FINANCIAL_LEASE" else "Mutuo Aeronautico"
+    await EconomyService.record_transaction(
+        session=db,
+        category="FINANCING",
+        title=f"Estinzione Anticipata {mode_label} {aircraft.tail_number}",
+        amount_eur=-remaining_debt,
+        description=f"Saldo anticipato capitale residuo ({aircraft.remaining_payments_months} rate rimanenti) per {aircraft.name}",
+        aircraft_tail=aircraft.tail_number,
+        company=company
+    )
+
+    aircraft.financed_amount_remaining_eur = 0.0
+    aircraft.monthly_payment_eur = 0.0
+    aircraft.remaining_payments_months = 0
+    aircraft.weekly_payment_eur = 0.0
+    aircraft.remaining_payments_weeks = 0
+    aircraft.acquisition_mode = "OWNED_CASH"
+
+    await db.commit()
+    return {
+        "message": f"Finanziamento per {aircraft.tail_number} estinto in anticipo (€ {remaining_debt:,.2f})! Ora è 100% di proprietà.",
+        "paid_off_eur": remaining_debt,
+        "new_cash_balance": company.cash_balance
     }

@@ -14,7 +14,8 @@ class Company(Base):
     difficulty_level = Column(String, default="STANDARD")
     reputation = Column(Float, default=100.0)  # 0 to 100%
     virtual_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    operating_day = Column(Integer, default=1)  # Virtual day counter (Day 1, 8, 15...)
+    operating_day = Column(Integer, default=1)  # Legacy day counter
+    operating_month = Column(String, default=lambda: datetime.now(timezone.utc).strftime("%Y-%m")) # "YYYY-MM" e.g. "2026-11"
     simbrief_username = Column(String, nullable=True, default="")
     simbrief_pilot_id = Column(String, nullable=True, default="")
     xp12_install_path = Column(String, nullable=True, default="")
@@ -69,6 +70,8 @@ class Aircraft(Base):
     acquisition_mode = Column(String, default="OWNED_CASH") # "OWNED_CASH", "FINANCIAL_LEASE", "FINANCED_LOAN", "RENTAL_HOURLY"
     weekly_payment_eur = Column(Float, default=0.0)
     remaining_payments_weeks = Column(Integer, default=0)
+    monthly_payment_eur = Column(Float, default=0.0)
+    remaining_payments_months = Column(Integer, default=0)
     financed_amount_remaining_eur = Column(Float, default=0.0)
     hourly_lease_rate = Column(Float, default=0.0)
     hourly_maintenance_reserve = Column(Float, default=120.0) # € / hour reserve
@@ -161,6 +164,7 @@ class FinancialTransaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     operating_day = Column(Integer, default=1)
+    operating_month = Column(String, default=lambda: datetime.now(timezone.utc).strftime("%Y-%m")) # "YYYY-MM"
     category = Column(String, index=True) # "REVENUE", "FUEL", "LANDING_FEE", "MAINTENANCE", "LEASE", "FIXED_HANGAR", "FIXED_INSURANCE", "AIRCRAFT_PURCHASE"
     title = Column(String)
     description = Column(String, nullable=True)

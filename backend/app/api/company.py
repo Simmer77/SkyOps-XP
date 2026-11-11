@@ -67,6 +67,7 @@ async def create_company_profile(req: CreateCompanyRequest, db: AsyncSession = D
         reputation=100.0,
         virtual_date=datetime.now(timezone.utc),
         operating_day=1,
+        operating_month=datetime.now(timezone.utc).strftime("%Y-%m"),
         simbrief_username=sb_user,
         simbrief_pilot_id=sb_pilot,
         xp12_install_path=detected_xp

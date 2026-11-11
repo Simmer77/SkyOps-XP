@@ -8,6 +8,15 @@ from app.models.schema import Company, Aircraft, FlightLog, MaintenanceEvent, Fi
 
 logger = logging.getLogger("SkyOps.Economy")
 
+MONTHS_IT_FULL = [
+    "", "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+    "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"
+]
+MONTHS_IT_SHORT = [
+    "", "Gen", "Feb", "Mar", "Apr", "Mag", "Giu",
+    "Lug", "Ago", "Set", "Ott", "Nov", "Dic"
+]
+
 # Parametri operativi e categorie velivolo basati su standard reali EASA / FAA
 CATEGORY_SPECS = {
     "GA": {
@@ -15,8 +24,8 @@ CATEGORY_SPECS = {
         "avg_mtow_tonnes": 2.7,
         "base_landing_fee_eur": 22.0,
         "fee_per_tonne_eur": 7.50,
-        "hangar_weekly_eur": 120.0,
-        "insurance_weekly_eur": 160.0,
+        "hangar_monthly_eur": 480.0,
+        "insurance_monthly_eur": 640.0,
         "default_lease_rate_eur_h": 320.0,
         "pilots_count": 1,
         "attendants_count": 0,
@@ -28,8 +37,8 @@ CATEGORY_SPECS = {
         "avg_mtow_tonnes": 8.5,
         "base_landing_fee_eur": 65.0,
         "fee_per_tonne_eur": 9.20,
-        "hangar_weekly_eur": 350.0,
-        "insurance_weekly_eur": 520.0,
+        "hangar_monthly_eur": 1400.0,
+        "insurance_monthly_eur": 2080.0,
         "default_lease_rate_eur_h": 850.0,
         "pilots_count": 2,
         "attendants_count": 1,
@@ -41,8 +50,8 @@ CATEGORY_SPECS = {
         "avg_mtow_tonnes": 75.0,
         "base_landing_fee_eur": 280.0,
         "fee_per_tonne_eur": 11.20,
-        "hangar_weekly_eur": 1400.0,
-        "insurance_weekly_eur": 1950.0,
+        "hangar_monthly_eur": 5600.0,
+        "insurance_monthly_eur": 7800.0,
         "default_lease_rate_eur_h": 1650.0,
         "pilots_count": 2,
         "attendants_count": 4,
@@ -109,12 +118,48 @@ class EconomyService:
         }
 
     @staticmethod
-    def calculate_fixed_period_costs(category: str, days: int = 7) -> Dict[str, float]:
-        """Calcola i costi fissi (hangar + assicurazione) per il periodo virtuale trascorso"""
+    def current_ym() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m")
+
+    @staticmethod
+    def format_operating_month_it(ym: Optional[str], short: bool = False) -> str:
+        raw = (ym or "").strip()
+        try:
+            y_str, m_str = raw.split("-")
+            m_idx = int(m_str)
+            if 1 <= m_idx <= 12:
+                names = MONTHS_IT_SHORT if short else MONTHS_IT_FULL
+                return f"{names[m_idx]} {y_str}"
+        except Exception:
+            pass
+        now = datetime.now(timezone.utc)
+        names = MONTHS_IT_SHORT if short else MONTHS_IT_FULL
+        return f"{names[now.month]} {now.year}"
+
+    @staticmethod
+    def iter_elapsed_months(start_ym: str, end_ym: str) -> List[str]:
+        """Genera ogni mese YYYY-MM da start_ym (incluso) fino a end_ym (escluso)."""
+        try:
+            sy, sm = map(int, start_ym.split("-"))
+            ey, em = map(int, end_ym.split("-"))
+        except Exception:
+            return []
+        res: List[str] = []
+        y, m = sy, sm
+        while (y, m) < (ey, em):
+            res.append(f"{y:04d}-{m:02d}")
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
+        return res
+
+    @staticmethod
+    def calculate_fixed_monthly_costs(category: str) -> Dict[str, float]:
+        """Calcola i costi fissi mensili (hangar + assicurazione) per categoria."""
         specs = CATEGORY_SPECS.get(category, CATEGORY_SPECS["GA"])
-        factor = days / 7.0
-        hangar = round(specs["hangar_weekly_eur"] * factor, 2)
-        insurance = round(specs["insurance_weekly_eur"] * factor, 2)
+        hangar = round(specs["hangar_monthly_eur"], 2)
+        insurance = round(specs["insurance_monthly_eur"], 2)
         return {
             "hangar_eur": hangar,
             "insurance_eur": insurance,
@@ -130,24 +175,27 @@ class EconomyService:
         description: Optional[str] = None,
         aircraft_tail: Optional[str] = None,
         flight_id: Optional[int] = None,
-        company: Optional[Company] = None
+        company: Optional[Company] = None,
+        operating_month: Optional[str] = None
     ) -> FinancialTransaction:
         """
-        Registra una transazione nel libro mastro (Ledger) e aggiorna la cassa aziendale se richiesto.
+        Registra una transazione nel libro mastro (Ledger) e aggiorna la cassa aziendale.
         """
         if not company:
             comp_res = await session.execute(select(Company).limit(1))
             company = comp_res.scalars().first()
             if not company:
-                company = Company(cash_balance=175000.0, operating_day=1)
+                company = Company(cash_balance=175000.0, operating_day=1, operating_month=EconomyService.current_ym())
                 session.add(company)
                 await session.flush()
 
         company.cash_balance = round(company.cash_balance + amount_eur, 2)
+        tx_month = operating_month or company.operating_month or EconomyService.current_ym()
         
         tx = FinancialTransaction(
             timestamp=datetime.now(timezone.utc),
             operating_day=company.operating_day or 1,
+            operating_month=tx_month,
             category=category,
             title=title,
             description=description,
@@ -160,14 +208,13 @@ class EconomyService:
         return tx
 
     @staticmethod
-    async def get_projected_fixed_costs(session: AsyncSession, days: int = 7) -> Dict[str, Any]:
+    async def get_projected_monthly_fixed_costs(session: AsyncSession) -> Dict[str, Any]:
         """
-        Calcola i costi fissi previsti per la flotta di proprietà per il prossimo periodo.
+        Calcola i costi fissi mensili previsti per tutta la flotta di proprietà alla chiusura del mese.
         """
         ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
         owned_aircraft = ac_res.scalars().all()
         
-        factor = days / 7.0
         details = []
         total_hangar = 0.0
         total_insurance = 0.0
@@ -175,14 +222,13 @@ class EconomyService:
         
         for ac in owned_aircraft:
             specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
-            hangar = round(specs["hangar_weekly_eur"] * factor, 2)
-            insurance = round(specs["insurance_weekly_eur"] * factor, 2)
+            hangar = round(specs["hangar_monthly_eur"], 2)
+            insurance = round(specs["insurance_monthly_eur"], 2)
             financing = 0.0
-            if (ac.remaining_payments_weeks or 0) > 0 and (ac.weekly_payment_eur or 0.0) > 0:
-                financing = round(ac.weekly_payment_eur * factor, 2)
+            if (ac.remaining_payments_months or 0) > 0 and (ac.monthly_payment_eur or 0.0) > 0:
+                financing = round(min(ac.monthly_payment_eur, ac.financed_amount_remaining_eur or ac.monthly_payment_eur), 2)
                 
             subtotal = round(hangar + insurance + financing, 2)
-            
             total_hangar += hangar
             total_insurance += insurance
             total_financing += financing
@@ -194,11 +240,12 @@ class EconomyService:
                 "hangar_eur": hangar,
                 "insurance_eur": insurance,
                 "financing_eur": financing,
+                "remaining_months": ac.remaining_payments_months or 0,
                 "subtotal_eur": subtotal
             })
             
         return {
-            "period_days": days,
+            "period": "MONTHLY",
             "owned_aircraft_count": len(owned_aircraft),
             "total_hangar_eur": round(total_hangar, 2),
             "total_insurance_eur": round(total_insurance, 2),
@@ -208,126 +255,145 @@ class EconomyService:
         }
 
     @staticmethod
-    async def advance_operating_cycle(session: AsyncSession, days: int = 7) -> Dict[str, Any]:
+    async def sync_operating_months(session: AsyncSession, target_ym: Optional[str] = None) -> Dict[str, Any]:
         """
-        Avanza il giorno operativo e il calendario virtuale dell'azienda, addebitando
-        i costi fissi (hangar, assicurazione e rate leasing/mutuo) per tutti gli aerei di proprietà.
+        Sincronizza il Mese Operativo con il calendario reale.
+        Addebita automaticamente Hangar, Assicurazione e Rate Mensili per OGNI mese reale trascorso
+        senza tetti massimi (realismo gestionale completo).
         """
         comp_res = await session.execute(select(Company).limit(1))
         company = comp_res.scalars().first()
+        real_ym = (target_ym or EconomyService.current_ym()).strip()
         if not company:
-            raise ValueError("Nessun profilo aziendale attivo.")
-            
-        old_day = company.operating_day or 1
-        old_date = company.virtual_date or datetime.now(timezone.utc)
-        
-        # 1. Fetch owned aircraft
+            return {"operating_month": real_ym, "closed_months": [], "total_deductions_eur": 0.0}
+
+        now_utc = datetime.now(timezone.utc)
+        company.virtual_date = now_utc
+
+        if not company.operating_month:
+            company.operating_month = real_ym
+            await session.commit()
+            return {"operating_month": real_ym, "closed_months": [], "total_deductions_eur": 0.0}
+
+        if real_ym <= company.operating_month:
+            await session.commit()
+            return {"operating_month": company.operating_month, "closed_months": [], "total_deductions_eur": 0.0}
+
+        elapsed_months = EconomyService.iter_elapsed_months(company.operating_month, real_ym)
+        if not elapsed_months:
+            company.operating_month = real_ym
+            await session.commit()
+            return {"operating_month": real_ym, "closed_months": [], "total_deductions_eur": 0.0}
+
         ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
         owned_aircraft = ac_res.scalars().all()
-        
-        factor = days / 7.0
-        weeks_passed = max(1, round(days / 7.0)) if days >= 7 else 0
+
         total_deductions = 0.0
-        deductions_list = []
-        
-        for ac in owned_aircraft:
-            specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
-            hangar_cost = round(specs["hangar_weekly_eur"] * factor, 2)
-            insurance_cost = round(specs["insurance_weekly_eur"] * factor, 2)
-            financing_cost = 0.0
-            
-            # Addebito Hangar
-            if hangar_cost > 0:
-                await EconomyService.record_transaction(
-                    session=session,
-                    category="FIXED_HANGAR",
-                    title=f"Rimessaggio Hangar {ac.tail_number} ({days} gg)",
-                    amount_eur=-hangar_cost,
-                    description=f"Canone hangaraggio per {ac.name} presso {ac.current_icao} ({days} giorni simulati)",
-                    aircraft_tail=ac.tail_number,
-                    company=company
-                )
-                total_deductions += hangar_cost
-                
-            # Addebito Assicurazione
-            if insurance_cost > 0:
-                await EconomyService.record_transaction(
-                    session=session,
-                    category="FIXED_INSURANCE",
-                    title=f"Polizza Corpi & RC {ac.tail_number} ({days} gg)",
-                    amount_eur=-insurance_cost,
-                    description=f"Copertura assicurativa Kasko/Corpi & RC Terzi {ac.name} ({days} giorni simulati)",
-                    aircraft_tail=ac.tail_number,
-                    company=company
-                )
-                total_deductions += insurance_cost
-                
-            # Addebito Rata Leasing Finanziario / Mutuo Bancario
-            if (ac.remaining_payments_weeks or 0) > 0 and (ac.weekly_payment_eur or 0.0) > 0:
-                financing_cost = round(ac.weekly_payment_eur * factor, 2)
-                if financing_cost > 0:
-                    mode_label = "Leasing Finanziario" if ac.acquisition_mode == "FINANCIAL_LEASE" else "Mutuo Aeronautico"
+        closed_months_summary = []
+
+        for m_ym in elapsed_months:
+            m_label = EconomyService.format_operating_month_it(m_ym)
+            month_total = 0.0
+            for ac in owned_aircraft:
+                specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
+                hangar_cost = round(specs["hangar_monthly_eur"], 2)
+                insurance_cost = round(specs["insurance_monthly_eur"], 2)
+                financing_cost = 0.0
+
+                if hangar_cost > 0:
                     await EconomyService.record_transaction(
                         session=session,
-                        category="FINANCING",
-                        title=f"Rata {mode_label} {ac.tail_number}",
-                        amount_eur=-financing_cost,
-                        description=f"Rata periodica ({days} gg) per {ac.name} - Settimane residue: {max(0, (ac.remaining_payments_weeks or 0) - weeks_passed)}",
+                        category="FIXED_HANGAR",
+                        title=f"Rimessaggio Hangar {ac.tail_number} ({m_label})",
+                        amount_eur=-hangar_cost,
+                        description=f"Canone mensile hangar per {ac.name} presso {ac.current_icao} ({m_label})",
                         aircraft_tail=ac.tail_number,
-                        company=company
+                        company=company,
+                        operating_month=m_ym
                     )
-                    total_deductions += financing_cost
-                    ac.financed_amount_remaining_eur = max(0.0, round((ac.financed_amount_remaining_eur or 0.0) - financing_cost, 2))
-                    if weeks_passed > 0:
-                        ac.remaining_payments_weeks = max(0, (ac.remaining_payments_weeks or 0) - weeks_passed)
-                        if ac.remaining_payments_weeks == 0:
+                    month_total += hangar_cost
+
+                if insurance_cost > 0:
+                    await EconomyService.record_transaction(
+                        session=session,
+                        category="FIXED_INSURANCE",
+                        title=f"Polizza Corpi & RC {ac.tail_number} ({m_label})",
+                        amount_eur=-insurance_cost,
+                        description=f"Copertura assicurativa mensile Kasko/RC {ac.name} ({m_label})",
+                        aircraft_tail=ac.tail_number,
+                        company=company,
+                        operating_month=m_ym
+                    )
+                    month_total += insurance_cost
+
+                if (ac.remaining_payments_months or 0) > 0 and (ac.monthly_payment_eur or 0.0) > 0:
+                    rem_debt = ac.financed_amount_remaining_eur or 0.0
+                    if ac.remaining_payments_months == 1 and rem_debt > 0:
+                        financing_cost = round(rem_debt, 2)
+                    else:
+                        financing_cost = round(min(ac.monthly_payment_eur, rem_debt) if rem_debt > 0 else ac.monthly_payment_eur, 2)
+
+                    if financing_cost > 0:
+                        mode_label = "Leasing Finanziario" if ac.acquisition_mode == "FINANCIAL_LEASE" else "Mutuo Aeronautico"
+                        new_rem_months = max(0, (ac.remaining_payments_months or 0) - 1)
+                        await EconomyService.record_transaction(
+                            session=session,
+                            category="FINANCING",
+                            title=f"Rata Mensile {mode_label} {ac.tail_number} ({m_label})",
+                            amount_eur=-financing_cost,
+                            description=f"Canone mensile {m_label} per {ac.name} — Rate residue: {new_rem_months} mesi",
+                            aircraft_tail=ac.tail_number,
+                            company=company,
+                            operating_month=m_ym
+                        )
+                        month_total += financing_cost
+                        ac.financed_amount_remaining_eur = max(0.0, round(rem_debt - financing_cost, 2))
+                        ac.remaining_payments_months = new_rem_months
+                        if ac.remaining_payments_months == 0 or ac.financed_amount_remaining_eur <= 0.01:
                             ac.acquisition_mode = "OWNED_CASH"
-                            ac.weekly_payment_eur = 0.0
+                            ac.monthly_payment_eur = 0.0
+                            ac.remaining_payments_months = 0
                             ac.financed_amount_remaining_eur = 0.0
-                
-            deductions_list.append({
-                "tail_number": ac.tail_number,
-                "name": ac.name,
-                "hangar_cost": hangar_cost,
-                "insurance_cost": insurance_cost,
-                "financing_cost": financing_cost,
-                "total": round(hangar_cost + insurance_cost + financing_cost, 2)
+
+            total_deductions += month_total
+            closed_months_summary.append({
+                "ym": m_ym,
+                "label": m_label,
+                "total_deductions_eur": round(month_total, 2)
             })
 
-        # 2. Advance operational timeline
-        new_day = old_day + days
-        new_date = old_date + timedelta(days=days)
-        company.operating_day = new_day
-        company.virtual_date = new_date
-        
+        company.operating_month = real_ym
         await session.commit()
         await session.refresh(company)
-        
+
         return {
-            "advanced_days": days,
-            "old_day": old_day,
-            "new_day": new_day,
-            "old_virtual_date": old_date.isoformat(),
-            "new_virtual_date": new_date.isoformat(),
+            "operating_month": company.operating_month,
+            "operating_month_label": EconomyService.format_operating_month_it(company.operating_month),
+            "closed_months": closed_months_summary,
             "total_deductions_eur": round(total_deductions, 2),
-            "new_cash_balance_eur": company.cash_balance,
-            "deductions_by_aircraft": deductions_list
+            "new_cash_balance_eur": company.cash_balance
         }
 
     @staticmethod
-    async def get_financial_statement(session: AsyncSession) -> Dict[str, Any]:
+    async def get_financial_statement(session: AsyncSession, month_filter: Optional[str] = None) -> Dict[str, Any]:
         """
-        Genera il Rendiconto Finanziario Completo:
+        Genera il Rendiconto Finanziario Completo sincronizzando prima il Mese Operativo reale:
         - Stato Patrimoniale (Attivo Circolante, Flotta, Patrimonio Netto)
-        - Conto Economico (Ricavi Lordi, Costi Operativi DOC, Manutenzione, Costi Fissi, Risultato d'Esercizio)
-        - Previsioni Prossimo Ciclo Operativo
+        - Conto Economico filtrabile per Mese Operativo o Storico Totale
+        - Previsioni Chiusura Mese Operativo Corrente
         """
-        # 1. Company profile
+        await EconomyService.sync_operating_months(session)
+
         comp_res = await session.execute(select(Company).limit(1))
         company = comp_res.scalars().first()
+        curr_ym = EconomyService.current_ym()
         if not company:
             return {
                 "operating_day": 1,
+                "operating_month": curr_ym,
+                "operating_month_label": EconomyService.format_operating_month_it(curr_ym),
+                "selected_period": "ALL",
+                "available_months": [{"ym": curr_ym, "label": EconomyService.format_operating_month_it(curr_ym)}],
                 "virtual_date": datetime.now(timezone.utc).isoformat(),
                 "balance_sheet": {
                     "cash_balance_eur": 0.0,
@@ -345,7 +411,7 @@ class EconomyService:
                     "net_profit_eur": 0.0,
                     "profit_margin_pct": 0.0
                 },
-                "upcoming_fixed_costs_7d": {"period_days": 7, "owned_aircraft_count": 0, "total_hangar_eur": 0.0, "total_insurance_eur": 0.0, "total_financing_eur": 0.0, "total_fixed_eur": 0.0, "aircraft_breakdown": []}
+                "upcoming_fixed_costs_monthly": {"period": "MONTHLY", "owned_aircraft_count": 0, "total_hangar_eur": 0.0, "total_insurance_eur": 0.0, "total_financing_eur": 0.0, "total_fixed_eur": 0.0, "aircraft_breakdown": []}
             }
             
         # 2. Owned aircraft valuation & active financing debt
@@ -354,9 +420,29 @@ class EconomyService:
         fleet_book_value = sum(ac.purchase_price_eur or 0.0 for ac in owned_aircraft)
         financed_debt = sum(ac.financed_amount_remaining_eur or 0.0 for ac in owned_aircraft)
         
-        # 3. Aggregates from FinancialTransactions (or flight logs & maintenance if transactions are new)
+        # 3. Aggregates from FinancialTransactions (with optional month filter)
         tx_res = await session.execute(select(FinancialTransaction))
-        transactions = tx_res.scalars().all()
+        all_transactions = tx_res.scalars().all()
+
+        op_month = company.operating_month or curr_ym
+        month_set = {op_month}
+        for t in all_transactions:
+            m_val = getattr(t, "operating_month", None) or (t.timestamp.strftime("%Y-%m") if t.timestamp else None)
+            if m_val:
+                month_set.add(m_val)
+        available_months = [
+            {"ym": ym, "label": EconomyService.format_operating_month_it(ym)}
+            for ym in sorted(month_set, reverse=True)
+        ]
+
+        selected_period = month_filter.strip() if (month_filter and month_filter.strip() and month_filter.strip().upper() != "ALL") else "ALL"
+        if selected_period != "ALL":
+            transactions = [
+                t for t in all_transactions
+                if (getattr(t, "operating_month", None) or (t.timestamp.strftime("%Y-%m") if t.timestamp else "")) == selected_period
+            ]
+        else:
+            transactions = all_transactions
         
         revenue_flight = sum(t.amount_eur for t in transactions if t.category in ["REVENUE", "REVENUE_FLIGHT"] and t.amount_eur > 0)
         expense_fuel = abs(sum(t.amount_eur for t in transactions if t.category in ["FUEL", "EXPENSE_FUEL"]))
@@ -368,8 +454,8 @@ class EconomyService:
         expense_insurance = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_INSURANCE"]))
         expense_financing = abs(sum(t.amount_eur for t in transactions if t.category in ["FINANCING"]))
         
-        # If no transactions exist yet, calculate from existing flight logs & maintenance events to preserve history
-        if not transactions:
+        # Fallback only if database has literally zero FinancialTransactions
+        if not all_transactions:
             fl_res = await session.execute(select(FlightLog))
             flights = fl_res.scalars().all()
             revenue_flight = sum(f.revenue_usd or 0.0 for f in flights)
@@ -388,11 +474,15 @@ class EconomyService:
         net_profit = round(revenue_flight - total_expenses, 2)
         margin_pct = round((net_profit / revenue_flight * 100.0), 1) if revenue_flight > 0 else 0.0
         
-        # Next cycle projection
-        projections = await EconomyService.get_projected_fixed_costs(session, days=7)
+        # Next month closing projection
+        projections = await EconomyService.get_projected_monthly_fixed_costs(session)
         
         return {
             "operating_day": company.operating_day or 1,
+            "operating_month": op_month,
+            "operating_month_label": EconomyService.format_operating_month_it(op_month),
+            "selected_period": selected_period,
+            "available_months": available_months,
             "virtual_date": (company.virtual_date or datetime.now(timezone.utc)).isoformat(),
             
             # Stato Patrimoniale (Balance Sheet)
@@ -428,8 +518,8 @@ class EconomyService:
                 "profit_margin_pct": margin_pct
             },
             
-            # Previsioni Fisse Settimanali
-            "upcoming_fixed_costs_7d": projections
+            # Previsioni Chiusura Mese Corrente
+            "upcoming_fixed_costs_monthly": projections
         }
 
     @staticmethod
@@ -493,6 +583,15 @@ class EconomyService:
                     {"category": "General Aviation (GA)", "crew": "1 Pilota", "rate": "€ 90.00 / ora"},
                     {"category": "Business Jet (BIZJET)", "crew": "2 Piloti + 1 Assistente di Volo", "rate": "€ 240.00 / ora"},
                     {"category": "Airliner (AIRLINER)", "crew": "2 Piloti + 4 Assistenti di Volo", "rate": "€ 520.00 / ora"}
+                ]
+            },
+            "fixed_costs_rules": {
+                "formula": "Costi Fissi Mensili = Hangar + Assicurazione + Eventuale Rata Finanziamento (addebitati automaticamente a ogni cambio mese reale)",
+                "notes": "Il Mese Operativo segue il calendario reale: che tu faccia 1 o 100 voli al mese i costi fissi mensili non cambiano. Le pause di più mesi reali maturano tutti i mesi trascorsi. Puoi estinguere in anticipo mutuo/leasing dall'Hangar.",
+                "categories": [
+                    {"category": "General Aviation (GA)", "hangar": "€ 480 / mese", "insurance": "€ 640 / mese", "total": "€ 1.120 / mese"},
+                    {"category": "Business Jet (BIZJET)", "hangar": "€ 1.400 / mese", "insurance": "€ 2.080 / mese", "total": "€ 3.480 / mese"},
+                    {"category": "Airliner (AIRLINER)", "hangar": "€ 5.600 / mese", "insurance": "€ 7.800 / mese", "total": "€ 13.400 / mese"}
                 ]
             },
             "wear_and_maintenance_rules": {
