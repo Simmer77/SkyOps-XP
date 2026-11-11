@@ -12,6 +12,7 @@ class Company(Base):
     cash_balance = Column(Float, default=150000.0)  # Starting capital
     starting_capital_eur = Column(Float, default=150000.0)
     difficulty_level = Column(String, default="STANDARD")
+    economy_mode = Column(String, default="REALISTIC") # "REALISTIC" | "STANDARD"
     reputation = Column(Float, default=100.0)  # 0 to 100%
     virtual_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     operating_day = Column(Integer, default=1)  # Legacy day counter
@@ -144,6 +145,8 @@ class FlightLog(Base):
     reputation_delta = Column(Float, default=0.0)
     reputation_bonus_eur = Column(Float, default=0.0)
     penalty_eur = Column(Float, default=0.0)
+    maint_reserve_eur = Column(Float, default=0.0)
+    ioc_cost_eur = Column(Float, default=0.0)
     flight_rules = Column(String, default="IFR")
     pax_count = Column(Integer, default=0)
     tour_id = Column(Integer, ForeignKey("tours.id"), nullable=True)

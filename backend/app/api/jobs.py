@@ -48,9 +48,10 @@ async def estimate_manual_route(
     """Calcola in anteprima distanza (NM) ed incasso stimato per un piano di volo manuale."""
     comp = (await db.execute(select(Company).limit(1))).scalars().first()
     xp_path = comp.xp12_install_path if comp else None
+    econ_mode = (comp.economy_mode if comp and getattr(comp, "economy_mode", None) else "REALISTIC")
     dist = DealershipService.distance_between_icaos_nm(origin, destination, xp_path)
     eff_dist = dist if (dist and dist > 0) else 150.0
-    reward = calculate_simbrief_reward(eff_dist, pax, cargo, category) if is_commercial else 0.0
+    reward = calculate_simbrief_reward(eff_dist, pax, cargo, category, economy_mode=econ_mode) if is_commercial else 0.0
     return {
         "origin_icao": origin.strip().upper(),
         "destination_icao": destination.strip().upper(),
@@ -76,6 +77,7 @@ async def create_manual_flight_plan(req: ManualFlightPlanRequest, db: AsyncSessi
 
     comp = (await db.execute(select(Company).limit(1))).scalars().first()
     xp_path = comp.xp12_install_path if comp else None
+    econ_mode = (comp.economy_mode if comp and getattr(comp, "economy_mode", None) else "REALISTIC")
 
     dist = req.distance_nm if (req.distance_nm and req.distance_nm > 0) else DealershipService.distance_between_icaos_nm(orig, dest, xp_path)
     if not dist or dist <= 0:
@@ -90,7 +92,12 @@ async def create_manual_flight_plan(req: ManualFlightPlanRequest, db: AsyncSessi
 
     flt_num = (req.flight_number or f"SO{aircraft.tail_number[-3:]}").strip().upper()
     if req.is_commercial:
-        reward = calculate_simbrief_reward(dist, req.pax_count, req.cargo_kg, aircraft.category)
+        reward = calculate_simbrief_reward(
+            dist, req.pax_count, req.cargo_kg,
+            category=aircraft.category,
+            mtow_kg=aircraft.mtow_kg or 0.0,
+            economy_mode=econ_mode
+        )
         jtype = "PASSENGER" if req.pax_count > 0 else "CARGO"
         title = f"Piano {flt_num}: {orig} -> {dest}"
     else:
@@ -135,7 +142,9 @@ async def get_jobs(airport: Optional[str] = None, status: str = "AVAILABLE", db:
 @router.post("/generate")
 async def generate_jobs(req: GenerateJobsRequest, db: AsyncSession = Depends(get_db)):
     """Generates 4-5 dynamic contracts from the specified airport"""
-    jobs_data = JobGenerator.generate_jobs_for_airport(req.origin_icao, req.category, req.count)
+    comp = (await db.execute(select(Company).limit(1))).scalars().first()
+    econ_mode = (comp.economy_mode if comp and getattr(comp, "economy_mode", None) else "REALISTIC")
+    jobs_data = JobGenerator.generate_jobs_for_airport(req.origin_icao, req.category, req.count, economy_mode=econ_mode)
     created_jobs = []
     for jd in jobs_data:
         job = Job(**jd)

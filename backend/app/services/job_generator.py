@@ -82,7 +82,7 @@ def calculate_distance_nm(lat1: float, lon1: float, lat2: float, lon2: float) ->
 
 class JobGenerator:
     @staticmethod
-    def generate_jobs_for_airport(origin_icao: str, category: str = "GA", count: int = 5) -> List[Dict[str, Any]]:
+    def generate_jobs_for_airport(origin_icao: str, category: str = "GA", count: int = 5, economy_mode: str = "REALISTIC") -> List[Dict[str, Any]]:
         """
         Generates 4-5 realistic jobs originating from the given airport.
         """
@@ -123,15 +123,19 @@ class JobGenerator:
             else:
                 matching_template = random.choice(matching_templates)
                 
+            # Calculate realistic market reward via EconomyService
+            from app.services.economy import EconomyService
             pax = random.randint(matching_template["pax_range"][0], matching_template["pax_range"][1])
             cargo = round(random.uniform(matching_template["cargo_range"][0], matching_template["cargo_range"][1]), 0)
-            
-            # Calculate dynamic reward based on distance and urgency/type
-            rate = matching_template["base_rate_nm"] * random.uniform(0.9, 1.25)
-            if category == "AIRLINER":
-                reward = round(dist * rate * max(1, pax * 0.4), 0)
-            else:
-                reward = round(dist * rate + (pax * 120) + (cargo * 1.5), 0)
+            reward = EconomyService.calculate_route_reward(
+                distance_nm=dist,
+                pax_count=pax,
+                cargo_kg=cargo,
+                category=category,
+                job_type=matching_template["type"],
+                economy_mode=economy_mode
+            )
+            reward = round(reward * random.uniform(0.92, 1.12), 0)
                 
             jobs.append({
                 "title": f"{matching_template['title']} verso {name} ({icao})",

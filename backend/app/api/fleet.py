@@ -584,10 +584,12 @@ async def refuel_aircraft(aircraft_id: int, req: RefuelRequest, db: AsyncSession
     
     comp_res = await db.execute(select(Company).limit(1))
     company = comp_res.scalars().first()
+    econ_mode = (company.economy_mode if company and getattr(company, "economy_mode", None) else "REALISTIC")
+    fuel_price = EconomyService.get_fuel_price_per_kg(aircraft.category, econ_mode)
     
     cost_eur = 0.0
     if diff_kg > 0:
-        cost_eur = round(diff_kg * settings.DEFAULT_FUEL_PRICE_EUR_PER_KG, 2)
+        cost_eur = round(diff_kg * fuel_price, 2)
         if company and company.cash_balance < cost_eur:
             raise HTTPException(status_code=400, detail="Fondi insufficienti per il rifornimento.")
         if company:
@@ -596,7 +598,7 @@ async def refuel_aircraft(aircraft_id: int, req: RefuelRequest, db: AsyncSession
                 category="FUEL",
                 title=f"Rifornimento a Terra ({diff_kg:.1f} kg)",
                 amount_eur=-cost_eur,
-                description=f"Carburante Jet-A1 imbarcato per {aircraft.tail_number} ({aircraft.current_icao})",
+                description=f"Carburante ({fuel_price:.2f} €/kg) imbarcato per {aircraft.tail_number} ({aircraft.current_icao})",
                 aircraft_tail=aircraft.tail_number,
                 company=company
             )
@@ -608,8 +610,9 @@ async def refuel_aircraft(aircraft_id: int, req: RefuelRequest, db: AsyncSession
         xp_connector.set_fuel_kg(target)
         
     return {
-        "message": f"Rifornimento completato: {target:.1f} kg a bordo.",
+        "message": f"Rifornimento completato: {target:.1f} kg a bordo (€ {fuel_price:.2f}/kg).",
         "cost_eur": cost_eur,
+        "fuel_price_per_kg": fuel_price,
         "fuel_added_kg": max(0.0, diff_kg),
         "new_fuel_kg": aircraft.fuel_quantity_kg,
         "new_cash_balance": company.cash_balance if company else None

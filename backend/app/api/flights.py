@@ -98,6 +98,7 @@ async def get_active_flight(
         else getattr(job, "tour_id", None)
     )
 
+    econ_mode = (comp.economy_mode if comp and getattr(comp, "economy_mode", None) else "REALISTIC")
     return {
         "is_active": flight_tracker.active_aircraft_id is not None,
         "phase": flight_tracker.phase,
@@ -106,6 +107,8 @@ async def get_active_flight(
         "exclude_crew_cost": effective_exclude_crew,
         "flight_rules": effective_rules,
         "tour_id": effective_tour_id,
+        "fuel_price_per_kg": EconomyService.get_fuel_price_per_kg(cat_key, econ_mode),
+        "economy_mode": econ_mode,
         "has_salaried_crew": salaried_crew is not None,
         "salaried_crew_name": salaried_crew.name if salaried_crew else None,
         "crew_spec": {
@@ -190,11 +193,14 @@ async def start_flight(req: StartFlightRequest, db: AsyncSession = Depends(get_d
     preflight_refuel_kg = 0.0
     preflight_refuel_cost = 0.0
 
+    econ_mode = (comp.economy_mode if comp and getattr(comp, "economy_mode", None) else "REALISTIC")
+    fuel_price = EconomyService.get_fuel_price_per_kg(aircraft.category, econ_mode)
+
     if xp_fuel > saved_fuel + 2.0:
         capped_xp_fuel = min(aircraft.fuel_capacity_kg or xp_fuel, xp_fuel) if (aircraft.fuel_capacity_kg and aircraft.fuel_capacity_kg > 0) else xp_fuel
         added_kg = round(capped_xp_fuel - saved_fuel, 1)
         if added_kg > 2.0:
-            refuel_cost = round(added_kg * settings.DEFAULT_FUEL_PRICE_EUR_PER_KG, 2)
+            refuel_cost = round(added_kg * fuel_price, 2)
             if comp and comp.cash_balance < refuel_cost:
                 raise HTTPException(
                     status_code=400,

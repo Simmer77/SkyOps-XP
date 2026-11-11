@@ -65,6 +65,7 @@ export default function App() {
     name: 'AeroSky Executive Ops',
     home_base_icao: 'LIRN',
     difficulty_level: 'REALISTIC',
+    economy_mode: 'REALISTIC',
     starting_capital_eur: 150000,
     simbrief_id: '',
     xp12_install_path: ''
@@ -935,7 +936,9 @@ export default function App() {
     try {
       const isNumericId = /^\d+$/.test(cleaned);
       const paramKey = isNumericId ? 'pilot_id' : 'username';
-      const res = await fetch(`/api/simbrief/latest?${paramKey}=${encodeURIComponent(cleaned)}`);
+      const cat = selectedAircraft?.category || 'GA';
+      const mtow = selectedAircraft?.mtow_kg || 0;
+      const res = await fetch(`/api/simbrief/latest?${paramKey}=${encodeURIComponent(cleaned)}&category=${cat}&mtow_kg=${mtow}`);
       if (res.ok) {
         const ofp = await res.json();
         setSimbriefOfp(ofp);
@@ -1104,9 +1107,11 @@ export default function App() {
     if (!targetAc) return;
     const currentKg = Number(targetAc.fuel_quantity_kg || 0).toFixed(1);
     const maxKg = Number(targetAc.fuel_capacity_kg || 0).toFixed(0);
+    const activeMode = (financialOverview?.economy_mode || systemStatus?.company?.economy_mode || 'REALISTIC').toUpperCase();
+    const estPrice = activeMode === 'STANDARD' ? 1.05 : (targetAc.category === 'AIRLINER' ? 0.90 : targetAc.category === 'BIZJET' ? 1.25 : 1.35);
     const targetInput = prompt(
       `Carburante attuale salvato: ${currentKg} kg / Max ${maxKg} kg.\n` +
-      `Inserisci quantità totale desiderata in kg (pagherai SOLO la differenza aggiunta a 1,75 €/kg):`,
+      `Inserisci quantità totale desiderata in kg (pagherai SOLO la differenza aggiunta a ${estPrice.toFixed(2)} €/kg):`,
       maxKg
     );
     if (!targetInput) return;
@@ -1329,7 +1334,31 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                    <div className="pt-2">
+                      <label className="text-slate-300 block mb-2 font-semibold">Modello Economico (Margini & Sfida):</label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                        {[
+                          { id: 'REALISTIC', title: '🎯 REALISTICO (Consigliato)', desc: 'Margini reali aviazione (4%–12%), riserve motori/check-C, FBO/Ground Handling, Eurocontrol & IOC.' },
+                          { id: 'STANDARD', title: '🕹️ STANDARD (Rilassato)', desc: 'Ricavi +25% e costi accessori ridotti (-40%) per far crescere la flotta più rapidamente.' },
+                        ].map((m) => {
+                          const sel = (profileForm.economy_mode || 'REALISTIC') === m.id;
+                          return (
+                            <div
+                              key={m.id}
+                              onClick={() => setProfileForm({ ...profileForm, economy_mode: m.id })}
+                              className={`p-3 rounded-xl border cursor-pointer transition ${
+                                sel ? 'bg-emerald-950/35 border-emerald-400 ring-1 ring-emerald-400' : 'bg-slate-900/70 border-slate-800 hover:border-slate-600'
+                              }`}
+                            >
+                              <div className={`font-bold ${sel ? 'text-emerald-300' : 'text-white'}`}>{m.title}</div>
+                              <p className="text-[11px] text-slate-400 font-sans mt-1">{m.desc}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
               <div>
                 <label className="text-slate-300 block mb-1.5 font-semibold">SimBrief Pilot ID / Username (Opzionale)</label>
                 <input
@@ -1961,8 +1990,20 @@ export default function App() {
                     </div>
                     {lastFlightSummary.financials?.handling_fee > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-slate-400">(-) Catering & Handling Pax:</span>
+                        <span className="text-slate-400">(-) FBO / Ground Handling & Pax:</span>
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.handling_fee)}</span>
+                      </div>
+                    )}
+                    {lastFlightSummary.financials?.maint_reserve_cost > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">(-) Riserva Manutenzione (Ore):</span>
+                        <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.maint_reserve_cost)}</span>
+                      </div>
+                    )}
+                    {lastFlightSummary.financials?.ioc_cost > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">(-) Costi Indiretti (GDS/Broker/OCC):</span>
+                        <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.ioc_cost)}</span>
                       </div>
                     )}
                     {lastFlightSummary.financials?.lease_cost > 0 && (
@@ -1973,7 +2014,7 @@ export default function App() {
                     )}
                     <div className="flex justify-between items-center">
                       <span className="text-slate-400 flex items-center gap-1.5">
-                        (-) Equipaggio:
+                        (-) Equipaggio ({lastFlightSummary.financials?.crew_label || 'Piloti/A.V.'}):
                         {lastFlightSummary.financials?.crew_source === 'SOLO_VFR' && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">SOLO</span>
                         )}
@@ -1991,21 +2032,6 @@ export default function App() {
                         <span>-{formatEuro(lastFlightSummary.financials.penalty_eur)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-400 flex items-center gap-1.5">
-                        (-) Equipaggio ({lastFlightSummary.financials?.crew_label || 'Piloti/A.V.'}):
-                        {lastFlightSummary.financials?.crew_excluded && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
-                            SOLO / VFR
-                          </span>
-                        )}
-                      </span>
-                      <span className={lastFlightSummary.financials?.crew_cost > 0 ? 'text-rose-400' : 'text-slate-400'}>
-                        {lastFlightSummary.financials?.crew_cost > 0
-                          ? `-${formatEuro(lastFlightSummary.financials.crew_cost)}`
-                          : '€ 0,00'}
-                      </span>
-                    </div>
                     <div className="flex justify-between border-t border-slate-800 pt-2 font-bold text-sm">
                       <span className="text-white">(=) Utile Netto Volo:</span>
                       <span className={lastFlightSummary.financials?.net_profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
@@ -4214,8 +4240,36 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <span className="text-[11px] text-slate-400">
-                Vista attiva: <strong className="text-white">{financePeriodFilter === 'ALL' ? 'Storico Completo' : formatOperatingMonth(financePeriodFilter)}</strong>
+              <span className="flex items-center gap-2 text-[11px]">
+                <span className="text-slate-400">Economia:</span>
+                {['REALISTIC', 'STANDARD'].map((em) => {
+                  const activeMode = (financialOverview?.economy_mode || systemStatus?.company?.economy_mode || 'REALISTIC').toUpperCase() === em;
+                  return (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={async () => {
+                        const r = await fetch('/api/company/economy_mode', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ economy_mode: em })
+                        });
+                        const d = await r.json();
+                        if (r.ok) {
+                          showNotice(d.message, 'success');
+                          await Promise.all([fetchStatus(), fetchFinances(), fetchActiveFlight()]);
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded border font-bold transition ${
+                        activeMode
+                          ? (em === 'REALISTIC' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border-amber-500/40')
+                          : 'bg-slate-800/70 text-slate-400 border-slate-700 hover:text-white'
+                      }`}
+                    >
+                      {em === 'REALISTIC' ? '🎯 Realistica' : '🕹️ Standard'}
+                    </button>
+                  );
+                })}
               </span>
             </div>
 
@@ -4421,9 +4475,21 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Catering & Handling Passeggeri</span>
+                            <span>Catering, FBO & Handling Passeggeri</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.handling_fees_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Riserva Manutenzione (Power-by-the-Hour)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.maint_reserves_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Costi Indiretti IOC (GDS / Broker / EU261)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.ioc_costs_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
@@ -4629,8 +4695,10 @@ export default function App() {
                       { id: 'FUEL', label: 'Carburante' },
                       { id: 'LANDING_FEE', label: 'Tasse Atterraggio' },
                       { id: 'NAV_FEE', label: 'Eurocontrol' },
-                      { id: 'HANDLING', label: 'Handling/Catering' },
-                      { id: 'MAINTENANCE', label: 'Manutenzione' },
+                      { id: 'HANDLING', label: 'Handling/FBO' },
+                      { id: 'MAINT_RESERVE', label: 'Riserve Manut.' },
+                      { id: 'IOC', label: 'IOC / GDS' },
+                      { id: 'MAINTENANCE', label: 'Officina' },
                       { id: 'CREW', label: 'Equipaggio Volo' },
                       { id: 'CREW_SALARY', label: 'Stipendi Fissi' },
                       { id: 'PENALTY', label: 'Penali' },
@@ -4694,6 +4762,8 @@ export default function App() {
                                   tx.category === 'FUEL' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
                                   tx.category === 'LANDING_FEE' || tx.category === 'NAV_FEE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
                                   tx.category === 'HANDLING' ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30' :
+                                  tx.category === 'MAINT_RESERVE' ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30' :
+                                  tx.category === 'IOC' ? 'bg-slate-700/70 text-slate-200 border border-slate-600' :
                                   tx.category === 'MAINTENANCE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
                                   tx.category === 'CREW' || tx.category === 'CREW_SALARY' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
                                   tx.category === 'PENALTY' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :

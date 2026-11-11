@@ -208,6 +208,7 @@ class FlightTracker:
                 else bool(self.exclude_crew_cost or (job and getattr(job, "exclude_crew_cost", False)))
             )
             old_reputation = company.reputation if company.reputation is not None else 100.0
+            econ_mode = (getattr(company, "economy_mode", None) or "REALISTIC").upper()
             financials = EconomyService.calculate_flight_financials(
                 category=aircraft.category,
                 fuel_burned_kg=fuel_burned,
@@ -227,7 +228,8 @@ class FlightTracker:
                 max_g=self.max_g,
                 min_g=self.min_g,
                 origin_icao=orig_icao,
-                destination_icao=final_dest
+                destination_icao=final_dest,
+                economy_mode=econ_mode
             )
             company.reputation = financials["new_reputation"]
             
@@ -286,6 +288,8 @@ class FlightTracker:
                 reputation_delta=financials["reputation_delta"],
                 reputation_bonus_eur=financials["reputation_bonus_eur"],
                 penalty_eur=financials["penalty_eur"],
+                maint_reserve_eur=financials["maint_reserve_cost"],
+                ioc_cost_eur=financials["ioc_cost"],
                 flight_rules=eff_rules,
                 pax_count=pax_count,
                 tour_id=eff_tour_id,
@@ -383,9 +387,31 @@ class FlightTracker:
                 await EconomyService.record_transaction(
                     session=session,
                     category="HANDLING",
-                    title=f"Catering & Handling ({pax_count} Pax)",
+                    title=f"Handling FBO/Rampa & Pax ({pax_count} Pax)",
                     amount_eur=-financials["handling_fee"],
-                    description=f"Servizi passeggeri, catering e imbarco per {route_str} ({aircraft.category})",
+                    description=f"Assistenza a terra, gate/FBO e diritti passeggeri su {route_str} ({aircraft.category})",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["maint_reserve_cost"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="MAINT_RESERVE",
+                    title=f"Riserva Manutenzione {aircraft.tail_number}",
+                    amount_eur=-financials["maint_reserve_cost"],
+                    description=f"Accantonamento Power-by-the-Hour / Check C-D ({duration_hours:.2f}h)",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["ioc_cost"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="IOC",
+                    title=f"Distribuzione GDS, Broker & OCC {log.flight_number}",
+                    amount_eur=-financials["ioc_cost"],
+                    description=f"Costi indiretti operativi, commissioni e fondo disservizi EU261 su {route_str}",
                     aircraft_tail=aircraft.tail_number,
                     flight_id=log.id,
                     company=company

@@ -30,10 +30,14 @@ class CreateCompanyRequest(BaseModel):
     name: str
     home_base_icao: str = "LIRN"
     difficulty_level: str = "STANDARD"
+    economy_mode: str = "REALISTIC"  # "REALISTIC" | "STANDARD"
     starting_capital_eur: Optional[float] = None
     simbrief_id: Optional[str] = ""
     xp12_install_path: Optional[str] = ""
     sync_xp12: bool = True
+
+class UpdateEconomyModeRequest(BaseModel):
+    economy_mode: str  # "REALISTIC" | "STANDARD"
 
 class SyncXP12Request(BaseModel):
     xp12_install_path: Optional[str] = None
@@ -58,12 +62,17 @@ async def create_company_profile(req: CreateCompanyRequest, db: AsyncSession = D
     
     detected_xp = (req.xp12_install_path or "").strip() or (XP12ScannerService.detect_xp12_path() or "")
     
+    econ_key = (req.economy_mode or "REALISTIC").strip().upper()
+    if econ_key not in ("REALISTIC", "STANDARD"):
+        econ_key = "REALISTIC"
+
     company = Company(
         name=req.name.strip() or "SkyOps Aviation",
         home_base_icao=req.home_base_icao.strip().upper()[:4] or "LIRN",
         cash_balance=capital,
         starting_capital_eur=capital,
         difficulty_level=diff_key,
+        economy_mode=econ_key,
         reputation=100.0,
         virtual_date=datetime.now(timezone.utc),
         operating_day=1,
@@ -86,6 +95,20 @@ async def create_company_profile(req: CreateCompanyRequest, db: AsyncSession = D
         "company": company,
         "xp12_sync": scan_res
     }
+
+@router.patch("/economy_mode")
+async def update_economy_mode(req: UpdateEconomyModeRequest, db: AsyncSession = Depends(get_db)):
+    """Permette di passare in qualsiasi momento tra economia REALISTIC e STANDARD senza perdere la carriera."""
+    mode = (req.economy_mode or "").strip().upper()
+    if mode not in ("REALISTIC", "STANDARD"):
+        raise HTTPException(status_code=400, detail="Modalità economica non valida (REALISTIC o STANDARD).")
+    comp = (await db.execute(select(Company).limit(1))).scalars().first()
+    if not comp:
+        raise HTTPException(status_code=404, detail="Profilo aziendale non trovato.")
+    comp.economy_mode = mode
+    await db.commit()
+    label = "Realistica (Margini 4–12%)" if mode == "REALISTIC" else "Standard (Margini Rilassati)"
+    return {"status": "success", "economy_mode": mode, "message": f"Modalità economica impostata su: {label}"}
 
 @router.post("/sync_xp12")
 async def sync_xp12_aircraft(req: SyncXP12Request, db: AsyncSession = Depends(get_db)):

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.models.schema import Job, Aircraft, Company
 from app.services.simbrief import SimBriefService
+from app.services.economy import EconomyService
 
 router = APIRouter(prefix="/simbrief", tags=["SimBrief"])
 
@@ -19,16 +20,29 @@ class ImportOFPRequest(BaseModel):
     flight_rules: str = "IFR"
     tour_id: Optional[int] = None
 
-def calculate_simbrief_reward(dist_nm: float, pax_count: int, cargo_kg: float, category: str = "GA") -> float:
-    rates = {"GA": 18.0, "BIZJET": 26.0, "AIRLINER": 38.0}
-    rate = rates.get((category or "GA").upper(), 22.0)
-    raw = (dist_nm * rate) + (pax_count * 120.0) + (cargo_kg * 1.5)
-    return float(round(max(650.0, raw), 0))
+def calculate_simbrief_reward(
+    dist_nm: float,
+    pax_count: int,
+    cargo_kg: float,
+    category: str = "GA",
+    mtow_kg: float = 0.0,
+    economy_mode: str = "REALISTIC"
+) -> float:
+    return EconomyService.calculate_route_reward(
+        distance_nm=dist_nm,
+        pax_count=pax_count,
+        cargo_kg=cargo_kg,
+        category=category,
+        mtow_kg=mtow_kg,
+        economy_mode=economy_mode
+    )
 
 @router.get("/latest")
 async def get_latest_ofp(
     username: Optional[str] = Query(None),
     pilot_id: Optional[str] = Query(None),
+    category: str = Query("GA"),
+    mtow_kg: float = Query(0.0),
     db: AsyncSession = Depends(get_db)
 ):
     comp_res = await db.execute(select(Company).limit(1))
@@ -60,11 +74,15 @@ async def get_latest_ofp(
             company.simbrief_pilot_id = ofp["user_id"]
         await db.commit()
         
-    # Attach estimated commercial reward
+    # Attach estimated commercial reward using company's active economy_mode
+    econ_mode = (company.economy_mode if company and getattr(company, "economy_mode", None) else "REALISTIC")
     ofp["estimated_reward_eur"] = calculate_simbrief_reward(
         ofp.get("distance_nm", 0.0),
         ofp.get("pax_count", 0),
-        ofp.get("cargo_kg", 0.0)
+        ofp.get("cargo_kg", 0.0),
+        category=category,
+        mtow_kg=mtow_kg,
+        economy_mode=econ_mode
     )
     return ofp
 
@@ -82,6 +100,10 @@ async def import_simbrief_flight(req: ImportOFPRequest, db: AsyncSession = Depen
     if not aircraft:
         raise HTTPException(status_code=404, detail="Aeromobile non trovato.")
 
+    comp_res = await db.execute(select(Company).limit(1))
+    company = comp_res.scalars().first()
+    econ_mode = (company.economy_mode if company and getattr(company, "economy_mode", None) else "REALISTIC")
+
     # Cancel any previous ACCEPTED/IN_PROGRESS jobs assigned to this aircraft to avoid conflicts
     old_jobs = (await db.execute(
         select(Job).where(Job.aircraft_id == aircraft.id, Job.status.in_(["ACCEPTED", "IN_PROGRESS"]))
@@ -92,7 +114,12 @@ async def import_simbrief_flight(req: ImportOFPRequest, db: AsyncSession = Depen
     # Calculate reward if commercial flight, or 0 for personal/ferry flight
     dist = ofp["distance_nm"]
     if req.is_commercial:
-        reward = calculate_simbrief_reward(dist, ofp["pax_count"], ofp["cargo_kg"], aircraft.category)
+        reward = calculate_simbrief_reward(
+            dist, ofp["pax_count"], ofp["cargo_kg"],
+            category=aircraft.category,
+            mtow_kg=aircraft.mtow_kg or 0.0,
+            economy_mode=econ_mode
+        )
         jtype = "PASSENGER" if ofp["pax_count"] > 0 else "CARGO"
         title_prefix = f"SimBrief {ofp['flight_number']}"
     else:

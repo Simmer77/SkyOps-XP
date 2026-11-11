@@ -83,6 +83,66 @@ class EconomyService:
         return code[0] in ("E", "L", "B") or code.startswith(("GC", "GM", "UD", "UG"))
 
     @staticmethod
+    def get_fuel_price_per_kg(category: str = "GA", economy_mode: str = "REALISTIC") -> float:
+        """Prezzo realistico Jet-A1 / AvGas al kg alla pompa per categoria e modalità."""
+        mode = (economy_mode or "REALISTIC").strip().upper()
+        if mode == "STANDARD":
+            return 1.05
+        cat = (category or "GA").strip().upper()
+        prices = {"AIRLINER": 0.90, "BIZJET": 1.25, "GA": 1.35}
+        return prices.get(cat, 1.25)
+
+    @staticmethod
+    def calculate_route_reward(
+        distance_nm: float,
+        pax_count: int,
+        cargo_kg: float,
+        category: str = "GA",
+        mtow_kg: float = 0.0,
+        job_type: str = "PASSENGER",
+        economy_mode: str = "REALISTIC"
+    ) -> float:
+        """
+        Calcola ricavi commerciali realistici senza doppio conteggio distanza + pax:
+        - AIRLINER: tariffa biglietto + ancillari a passeggero + eventuale belly cargo
+        - BIZJET: noleggio orario/distanza dell'intero jet scalato su MTOW + catering VIP
+        - GA: aerotaxi proporzionato a MTOW e distanza + pax/cargo
+        """
+        cat = (category or "GA").strip().upper()
+        specs = CATEGORY_SPECS.get(cat, CATEGORY_SPECS["GA"])
+        mtow_t = (mtow_kg / 1000.0) if (mtow_kg and mtow_kg > 0) else specs["avg_mtow_tonnes"]
+        dist = max(0.0, float(distance_nm or 0.0))
+        pax = max(0, int(pax_count or 0))
+        cargo = max(0.0, float(cargo_kg or 0.0))
+
+        if cat == "AIRLINER":
+            if pax > 0:
+                pax_yield = 80.0 + min(185.0, dist * 0.062)
+                raw = (pax * pax_yield) + (cargo * 0.40)
+            else:
+                raw = cargo * (0.45 + dist * 0.0012)
+            raw = max(1200.0, raw)
+        elif cat == "BIZJET":
+            w_mult = 0.72 + (mtow_t / 45.0)
+            raw = (dist * 13.8 * w_mult) + (pax * 45.0) + (cargo * 0.40)
+            raw = max(1400.0, raw)
+        else:
+            w_mult = 0.45 + (mtow_t / 6.0)
+            raw = (dist * 6.4 * w_mult) + (pax * 55.0) + (cargo * 0.45)
+            raw = max(320.0, raw)
+
+        jtype = (job_type or "PASSENGER").strip().upper()
+        if jtype == "MEDEVAC":
+            raw *= 1.22
+        elif jtype == "VIP":
+            raw *= 1.15
+
+        if (economy_mode or "REALISTIC").strip().upper() == "STANDARD":
+            raw *= 1.25
+
+        return float(round(raw, 0))
+
+    @staticmethod
     def calculate_flight_financials(
         category: str,
         fuel_burned_kg: float,
@@ -102,24 +162,29 @@ class EconomyService:
         max_g: float = 1.0,
         min_g: float = 1.0,
         origin_icao: str = "",
-        destination_icao: str = ""
+        destination_icao: str = "",
+        economy_mode: str = "REALISTIC"
     ) -> Dict[str, Any]:
         """
-        Calcola il bilancio finanziario completo del volo in Euro (€):
-        - Carburante: € 0 a fine volo (pagato al rifornimento)
-        - Tassa atterraggio (scontata a Base Operativa)
-        - Navigazione Eurocontrol (solo voli IFR nello spazio Eurocontrol/Europeo; esenti USA/extra-UE e VFR)
-        - Handling/Catering Pax (esenti sui voli VFR)
-        - Equipaggio (Freelance orario vs Assunto Fisso € 0/volo vs Solo VFR € 0)
-        - Bonus Qualità / Reputazione & Penali Hard Landing / Over-G
+        Calcola il Trip P&L completo in modalità REALISTIC (margini reali 4–12%) o STANDARD.
         """
-        specs = CATEGORY_SPECS.get(category, CATEGORY_SPECS["GA"])
+        cat = (category or "GA").strip().upper()
+        specs = CATEGORY_SPECS.get(cat, CATEGORY_SPECS["GA"])
+        mode = (economy_mode or "REALISTIC").strip().upper()
+        cost_realism = 1.0 if mode == "REALISTIC" else 0.60
+        mtow_t = (mtow_kg / 1000.0) if (mtow_kg and mtow_kg > 0) else specs["avg_mtow_tonnes"]
         
-        # 1. Costo Carburante a fine volo: 0 € (pagato alla pompa)
+        # 1. Carburante a fine volo: € 0 (già addebitato alla pompa al rifornimento)
         fuel_cost = 0.0
         
-        # 2. Tassa d'atterraggio (Landing Fee) con sconto Base Operativa
-        base_fee = specs["base_landing_fee_eur"] + (specs["avg_mtow_tonnes"] * specs["fee_per_tonne_eur"])
+        # 2. Tassa d'atterraggio (Landing Fee reale su MTOW effettivo, scontata alla Base Operativa)
+        landing_params = {
+            "GA": (22.0, 7.50),
+            "BIZJET": (140.0, 11.50),
+            "AIRLINER": (280.0, 5.20),
+        }
+        base_l, per_t_l = landing_params.get(cat, (22.0, 7.50))
+        base_fee = base_l + (mtow_t * per_t_l)
         if is_home_base:
             multiplier = 0.65 if is_leased else 0.30
             discount_pct = 35 if is_leased else 70
@@ -128,8 +193,7 @@ class EconomyService:
             discount_pct = 0
         landing_fee = round(base_fee * multiplier, 2)
 
-        # 3. Tariffe Rotta / Navigazione Eurocontrol (solo IFR, MTOW >= 2.0 t e almeno un aeroporto nello spazio Eurocontrol)
-        mtow_t = (mtow_kg / 1000.0) if (mtow_kg and mtow_kg > 0) else specs["avg_mtow_tonnes"]
+        # 3. Tariffe Rotta / Navigazione Eurocontrol + TNC (solo IFR in spazio Eurocontrol)
         if origin_icao or destination_icao:
             orig_ec = EconomyService.is_eurocontrol_icao(origin_icao)
             dest_ec = EconomyService.is_eurocontrol_icao(destination_icao)
@@ -145,7 +209,10 @@ class EconomyService:
         nav_fee = 0.0
         if is_ifr and eurocontrol_factor > 0 and distance_nm > 0 and mtow_t >= 2.0:
             dist_km = distance_nm * 1.852
-            nav_fee = round(math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * 65.0 * eurocontrol_factor, 2)
+            enroute = math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * 65.0 * eurocontrol_factor
+            tnc_rates = {"GA": 15.0, "BIZJET": 75.0, "AIRLINER": 320.0}
+            tnc = tnc_rates.get(cat, 15.0) * (1.0 if eurocontrol_factor == 1.0 else 0.5)
+            nav_fee = round(enroute + tnc, 2)
         nav_exempt_reason = None
         if not is_ifr:
             nav_exempt_reason = "VFR"
@@ -154,15 +221,33 @@ class EconomyService:
         elif mtow_t < 2.0:
             nav_exempt_reason = "MTOW_UNDER_2T"
 
-        # 4. Catering & Handling Passeggeri (solo commerciale IFR con passeggeri a bordo)
+        # 4. Ground Handling / FBO + Catering & Diritti Passeggeri (esenti su voli VFR solo/privati)
         handling_fee = 0.0
-        if is_ifr and job_reward > 0 and pax_count > 0:
-            handling_fee = round(pax_count * specs.get("handling_per_pax_eur", 15.0), 2)
-        
-        # 5. Costo Noleggio se aereo noleggiato
+        if is_ifr and (job_reward > 0 or pax_count > 0):
+            hb_hand_mult = 0.70 if (is_home_base and not is_leased) else 1.0
+            if cat == "AIRLINER":
+                handling_raw = (1250.0 * hb_hand_mult) + (max(0, pax_count) * 10.0)
+            elif cat == "BIZJET":
+                fbo_base = (350.0 + mtow_t * 42.0) * hb_hand_mult
+                handling_raw = fbo_base + (max(0, pax_count) * 50.0)
+            else:
+                handling_raw = (45.0 * hb_hand_mult) + (max(0, pax_count) * 5.0)
+            handling_fee = round(handling_raw * cost_realism, 2)
+
+        # 5. Riserva Manutenzione Oraria (Power-by-the-Hour / Check C-D)
+        if cat == "AIRLINER":
+            res_rate_h = 680.0 + (mtow_t * 2.8)
+        elif cat == "BIZJET":
+            res_rate_h = 320.0 + (mtow_t * 32.0)
+        else:
+            res_rate_h = 35.0 + (mtow_t * 30.0)
+        lease_res_mult = 0.35 if is_leased else 1.0
+        maint_reserve_cost = round(flight_hours * res_rate_h * lease_res_mult * cost_realism, 2)
+
+        # 6. Costo Noleggio se aereo noleggiato
         lease_cost = round(flight_hours * lease_rate_hourly, 2) if is_leased else 0.0
 
-        # 6. Costo Equipaggio (Solo VFR -> 0, Assunto Fisso -> 0 orario, altrimenti Freelance)
+        # 7. Costo Equipaggio (Solo VFR -> 0, Assunto Fisso -> 0 orario, altrimenti Freelance)
         crew_hourly = specs.get("crew_hourly_rate_eur", 90.0)
         if exclude_crew_cost:
             crew_cost = 0.0
@@ -174,7 +259,7 @@ class EconomyService:
             crew_cost = round(flight_hours * crew_hourly, 2)
             crew_source = "FREELANCE"
 
-        # 7. Sistema Reputazione & Bonus Qualità / Penali Atterraggio
+        # 8. Sistema Reputazione & Bonus Qualità / Penali Atterraggio
         rep = max(0.0, min(100.0, company_reputation if company_reputation is not None else 100.0))
         rep_bonus_pct = 0.0
         if job_reward > 0:
@@ -191,6 +276,11 @@ class EconomyService:
 
         reputation_bonus_eur = round(job_reward * (rep_bonus_pct / 100.0), 2) if job_reward > 0 else 0.0
         adjusted_gross_revenue = round(max(0.0, job_reward + reputation_bonus_eur), 2)
+
+        # 9. Costi Indiretti (IOC: GDS, carte di credito, broker, accantonamento EU261, OCC)
+        ioc_pct_map = {"GA": 0.02, "BIZJET": 0.045, "AIRLINER": 0.08}
+        ioc_pct = ioc_pct_map.get(cat, 0.02) * (1.0 if mode == "REALISTIC" else 0.5)
+        ioc_cost = round(adjusted_gross_revenue * ioc_pct, 2) if adjusted_gross_revenue > 0 else 0.0
 
         reputation_delta = 0.0
         penalty_eur = 0.0
@@ -212,11 +302,15 @@ class EconomyService:
         reputation_delta = round(reputation_delta, 1)
         new_reputation = round(max(0.0, min(100.0, rep + reputation_delta)), 1)
         
-        # 8. Spese totali e utile netto
-        total_expenses = round(fuel_cost + landing_fee + nav_fee + handling_fee + lease_cost + crew_cost + penalty_eur, 2)
+        # 10. Spese totali e utile netto
+        total_expenses = round(
+            fuel_cost + landing_fee + nav_fee + handling_fee + maint_reserve_cost + lease_cost + crew_cost + ioc_cost + penalty_eur,
+            2
+        )
         net_profit = round(adjusted_gross_revenue - total_expenses, 2)
         
         return {
+            "economy_mode": mode,
             "base_reward": round(job_reward, 2),
             "reputation_bonus_eur": reputation_bonus_eur,
             "reputation_bonus_pct": rep_bonus_pct,
@@ -227,6 +321,8 @@ class EconomyService:
             "nav_exempt_reason": nav_exempt_reason,
             "eurocontrol_area": eurocontrol_factor > 0,
             "handling_fee": handling_fee,
+            "maint_reserve_cost": maint_reserve_cost,
+            "ioc_cost": ioc_cost,
             "lease_cost": lease_cost,
             "crew_cost": crew_cost,
             "crew_source": crew_source,
@@ -600,6 +696,8 @@ class EconomyService:
         expense_penalty = abs(sum(t.amount_eur for t in transactions if t.category in ["PENALTY"]))
         expense_lease = abs(sum(t.amount_eur for t in transactions if t.category in ["LEASE", "EXPENSE_LEASE"]))
         expense_crew = abs(sum(t.amount_eur for t in transactions if t.category in ["CREW", "EXPENSE_CREW"]))
+        expense_maint_res = abs(sum(t.amount_eur for t in transactions if t.category in ["MAINT_RESERVE"]))
+        expense_ioc = abs(sum(t.amount_eur for t in transactions if t.category in ["IOC"]))
         expense_maint = abs(sum(t.amount_eur for t in transactions if t.category in ["MAINTENANCE", "EXPENSE_MAINTENANCE"]))
         expense_hangar = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_HANGAR"]))
         expense_insurance = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_INSURANCE"]))
@@ -616,6 +714,8 @@ class EconomyService:
             expense_nav = sum(getattr(f, "nav_fee_eur", 0.0) or 0.0 for f in flights)
             expense_handling = sum(getattr(f, "handling_fee_eur", 0.0) or 0.0 for f in flights)
             expense_penalty = sum(getattr(f, "penalty_eur", 0.0) or 0.0 for f in flights)
+            expense_maint_res = sum(getattr(f, "maint_reserve_eur", 0.0) or 0.0 for f in flights)
+            expense_ioc = sum(getattr(f, "ioc_cost_eur", 0.0) or 0.0 for f in flights)
             expense_lease = sum(f.lease_cost_usd or 0.0 for f in flights)
             expense_crew = sum(f.crew_cost_usd or 0.0 for f in flights)
             
@@ -623,7 +723,10 @@ class EconomyService:
             events = mv_res.scalars().all()
             expense_maint = sum(m.cost_usd or 0.0 for m in events)
             
-        direct_operating_costs = round(expense_fuel + expense_landing + expense_nav + expense_handling + expense_penalty + expense_lease + expense_crew, 2)
+        direct_operating_costs = round(
+            expense_fuel + expense_landing + expense_nav + expense_handling + expense_maint_res + expense_ioc + expense_penalty + expense_lease + expense_crew,
+            2
+        )
         fixed_overheads = round(expense_hangar + expense_insurance + expense_financing + expense_crew_salary, 2)
         total_expenses = round(direct_operating_costs + expense_maint + fixed_overheads, 2)
         net_profit = round(revenue_flight - total_expenses, 2)
@@ -638,6 +741,7 @@ class EconomyService:
             "operating_month_label": EconomyService.format_operating_month_it(op_month),
             "selected_period": selected_period,
             "available_months": available_months,
+            "economy_mode": (company.economy_mode or "REALISTIC").upper(),
             "reputation": company.reputation if company.reputation is not None else 100.0,
             "virtual_date": (company.virtual_date or datetime.now(timezone.utc)).isoformat(),
             
@@ -659,6 +763,8 @@ class EconomyService:
                     "landing_fees_eur": round(expense_landing, 2),
                     "nav_fees_eur": round(expense_nav, 2),
                     "handling_fees_eur": round(expense_handling, 2),
+                    "maint_reserves_eur": round(expense_maint_res, 2),
+                    "ioc_costs_eur": round(expense_ioc, 2),
                     "penalties_eur": round(expense_penalty, 2),
                     "aircraft_leases_eur": round(expense_lease, 2),
                     "crew_eur": round(expense_crew, 2)
@@ -690,11 +796,11 @@ class EconomyService:
         return {
             "currency": "EUR (€)",
             "fuel_rules": {
-                "fuel_type": "Jet-A1 Kerosene",
-                "price_per_kg_eur": settings.DEFAULT_FUEL_PRICE_EUR_PER_KG,
-                "price_per_litre_approx_eur": round(settings.DEFAULT_FUEL_PRICE_EUR_PER_KG * 0.80, 2),
-                "formula": "Costo Carburante = Kg Riforniti (Delta nel serbatoio) × 1.75 €/kg",
-                "notes": "Paghi SOLO alla pompa quando rifornisci (o aggiungi carburante in X-Plane 12 prima del decollo). Il carburante residuo già a bordo e il consumo in volo non generano doppi addebiti."
+                "fuel_type": "Jet-A1 Kerosene / AvGas",
+                "price_per_kg_eur": 0.90,
+                "price_per_litre_approx_eur": 0.72,
+                "formula": "Realistico: € 0,90/kg (Airliner) • € 1,25/kg (BizJet) • € 1,35/kg (GA) | Standard: € 1,05/kg",
+                "notes": "Paghi SOLO alla pompa quando rifornisci (o aggiungi carburante in X-Plane 12 prima del decollo). In linea con il mercato europeo (~900 €/t Airliner, ~1.250 €/t GAT)."
             },
             "landing_fee_rules": {
                 "formula": "Tassa Atterraggio = (Tassa Base + MTOW × Quota/t) × Sconto Base Operativa",
@@ -746,8 +852,8 @@ class EconomyService:
                 ]
             },
             "eurocontrol_and_handling_rules": {
-                "formula": "Tassa Sorvolo Eurocontrol = √(MTOW_t / 50) × (Distanza_km / 100) × 65 € | Handling Pax = Pax × Tariffa (€15 GA / €45 Biz / €18 Airliner)",
-                "notes": "Eurocontrol si applica solo alle tratte IFR in spazio aereo Europeo (ICAO E*/L*/B*/GC*/GM*, ≥2t). Voli interamente extra-UE (es. USA K*, Canada, Asia) e voli VFR sono completamente esenti (€ 0)."
+                "formula": "Eurocontrol+TNC (UE IFR) + FBO/Ground Handling + Riserva Manutenzione Oraria + Costi Indiretti (IOC 2%–8%)",
+                "notes": "In modalità REALISTICA (margini netti 4%–12%), ogni volo IFR paga handling, riserve motori/check-C e distribuzione/EU261. Voli extra-UE (es. USA) e VFR sono esenti da Eurocontrol."
             },
             "reputation_rules": {
                 "formula": "Reputazione (0–100%) modifica i ricavi charter (+10% se >=95%, +5% extra per Butter Landing) e genera penali per atterraggi duri",

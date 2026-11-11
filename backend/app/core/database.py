@@ -62,10 +62,13 @@ async def init_db():
             ("flight_logs", "reputation_delta", "FLOAT DEFAULT 0.0"),
             ("flight_logs", "reputation_bonus_eur", "FLOAT DEFAULT 0.0"),
             ("flight_logs", "penalty_eur", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "maint_reserve_eur", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "ioc_cost_eur", "FLOAT DEFAULT 0.0"),
             ("flight_logs", "flight_rules", "TEXT DEFAULT 'IFR'"),
             ("flight_logs", "pax_count", "INTEGER DEFAULT 0"),
             ("flight_logs", "tour_id", "INTEGER"),
             ("company", "operating_month", "TEXT DEFAULT ''"),
+            ("company", "economy_mode", "TEXT DEFAULT 'REALISTIC'"),
             ("aircraft", "monthly_payment_eur", "FLOAT DEFAULT 0.0"),
             ("aircraft", "remaining_payments_months", "INTEGER DEFAULT 0"),
             ("financial_transactions", "operating_month", "TEXT DEFAULT ''"),
@@ -81,6 +84,7 @@ async def init_db():
         curr_ym = datetime.now(timezone.utc).strftime("%Y-%m")
         try:
             await conn.execute(text(f"UPDATE company SET operating_month = '{curr_ym}' WHERE operating_month IS NULL OR operating_month = ''"))
+            await conn.execute(text("UPDATE company SET economy_mode = 'REALISTIC' WHERE economy_mode IS NULL OR economy_mode = ''"))
             await conn.execute(text("UPDATE financial_transactions SET operating_month = strftime('%Y-%m', timestamp) WHERE (operating_month IS NULL OR operating_month = '') AND timestamp IS NOT NULL"))
             await conn.execute(text(f"UPDATE financial_transactions SET operating_month = '{curr_ym}' WHERE operating_month IS NULL OR operating_month = ''"))
             await conn.execute(text(
