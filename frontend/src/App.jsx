@@ -1681,9 +1681,9 @@ export default function App() {
                               ? 'bg-sky-950/40 border-sky-400/50 text-sky-300 hover:bg-sky-900/40'
                               : 'bg-slate-800/80 border-slate-700 text-cyan-300 hover:bg-slate-700'
                           }`}
-                          title="IFR paga Eurocontrol & Handling Pax; VFR è esente"
+                          title="IFR paga tariffe ANSP/Sorvolo (Eurocontrol, NAV CANADA, ecc.; USA FAA esente) & Handling Pax; VFR è esente"
                         >
-                          {effRules === 'VFR' ? '🌤️ VFR (No Eurocontrol)' : '🛫 IFR (Eurocontrol ON)'}
+                          {effRules === 'VFR' ? '🌤️ VFR (Esente ANSP)' : '🛫 IFR (Sorvolo & ANSP)'}
                         </button>
                         {toursList.length > 0 && (
                           <select
@@ -1977,12 +1977,14 @@ export default function App() {
                       <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials?.landing_fee)}</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-400">(-) Navigazione Eurocontrol:</span>
+                      <span className="text-slate-400">
+                        (-) Navigazione & Sorvolo ({lastFlightSummary.financials?.nav_agency || 'ANSP'}):
+                      </span>
                       <span className={lastFlightSummary.financials?.nav_fee > 0 ? 'text-rose-400' : 'text-slate-400'}>
                         {lastFlightSummary.financials?.nav_fee > 0
                           ? `-${formatEuro(lastFlightSummary.financials.nav_fee)}`
-                          : lastFlightSummary.financials?.nav_exempt_reason === 'EXTRA_EU'
-                            ? '€ 0,00 (Extra-UE / No Eurocontrol)'
+                          : (lastFlightSummary.financials?.nav_exempt_reason === 'FAA_US_DOMESTIC' || lastFlightSummary.financials?.nav_exempt_reason === 'EXTRA_EU')
+                            ? '€ 0,00 (FAA USA Esente)'
                             : lastFlightSummary.financials?.nav_exempt_reason === 'MTOW_UNDER_2T'
                               ? '€ 0,00 (< 2t Esente)'
                               : '€ 0,00 (Esente VFR)'}
@@ -3610,11 +3612,11 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 font-mono text-xs">
                 <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
                   <div>
-                    <div className="font-bold text-slate-200">Regole di Volo (Eurocontrol & Handling)</div>
+                    <div className="font-bold text-slate-200">Regole di Volo (Sorvolo ANSP & Handling)</div>
                     <div className="text-[11px] text-slate-400 font-sans">
                       {planFlightRules === 'IFR'
-                        ? 'IFR: applica tasse di sorvolo Eurocontrol e Catering/Handling Pax.'
-                        : 'VFR: esente da tasse di rotta Eurocontrol e Handling Pax.'}
+                        ? 'IFR: applica tariffe ANSP regionali (Eurocontrol, NAV CANADA, Airservices, ICAO; USA FAA esente) e Handling Pax.'
+                        : 'VFR: esente da tasse di rotta ANSP/Eurocontrol e Handling Pax.'}
                     </div>
                   </div>
                   <div className="flex bg-slate-950 border border-slate-800 p-0.5 rounded-lg shrink-0">
@@ -4469,7 +4471,7 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Sorvolo & Navigazione Eurocontrol (IFR)</span>
+                            <span>Sorvolo & Navigazione Aerea (Eurocontrol / ANSP)</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.nav_fees_eur ?? 0)}
                             </span>
@@ -4694,7 +4696,7 @@ export default function App() {
                       { id: 'REVENUE', label: 'Incassi Voli (+)' },
                       { id: 'FUEL', label: 'Carburante' },
                       { id: 'LANDING_FEE', label: 'Tasse Atterraggio' },
-                      { id: 'NAV_FEE', label: 'Eurocontrol' },
+                      { id: 'NAV_FEE', label: 'Navigazione ANSP' },
                       { id: 'HANDLING', label: 'Handling/FBO' },
                       { id: 'MAINT_RESERVE', label: 'Riserve Manut.' },
                       { id: 'IOC', label: 'IOC / GDS' },

@@ -83,6 +83,25 @@ class EconomyService:
         return code[0] in ("E", "L", "B") or code.startswith(("GC", "GM", "UD", "UG"))
 
     @staticmethod
+    def resolve_nav_region(icao: Optional[str]):
+        """
+        Determina l'ente ANSP / tariffa rotta globale per codice ICAO:
+        Returns (agency_code, agency_label, unit_rate_eur, tnc_rates_dict)
+        """
+        code = (icao or "").strip().upper()
+        if not code:
+            return ("EUROCONTROL", "EUROCONTROL", 65.0, {"GA": 15.0, "BIZJET": 75.0, "AIRLINER": 320.0})
+        if code[0] == "K" or code.startswith(("PA", "PF", "PG", "PH", "PJ", "PM", "PO", "PP", "PW", "TJ", "TI")):
+            return ("FAA_DOM", "FAA USA (Esente)", 0.0, {"GA": 0.0, "BIZJET": 0.0, "AIRLINER": 0.0})
+        if EconomyService.is_eurocontrol_icao(code):
+            return ("EUROCONTROL", "EUROCONTROL", 65.0, {"GA": 15.0, "BIZJET": 75.0, "AIRLINER": 320.0})
+        if code[0] == "C":
+            return ("NAVCANADA", "NAV CANADA", 55.0, {"GA": 12.0, "BIZJET": 60.0, "AIRLINER": 260.0})
+        if code[0] == "Y" or code.startswith("NZ"):
+            return ("AIRSERVICES", "Airservices AU/NZ", 52.0, {"GA": 12.0, "BIZJET": 55.0, "AIRLINER": 240.0})
+        return ("ANSP_INTL", "ANSP Regionale ICAO", 40.0, {"GA": 10.0, "BIZJET": 45.0, "AIRLINER": 190.0})
+
+    @staticmethod
     def get_fuel_price_per_kg(category: str = "GA", economy_mode: str = "REALISTIC") -> float:
         """Prezzo realistico Jet-A1 / AvGas al kg alla pompa per categoria e modalità."""
         mode = (economy_mode or "REALISTIC").strip().upper()
@@ -193,31 +212,55 @@ class EconomyService:
             discount_pct = 0
         landing_fee = round(base_fee * multiplier, 2)
 
-        # 3. Tariffe Rotta / Navigazione Eurocontrol + TNC (solo IFR in spazio Eurocontrol)
-        if origin_icao or destination_icao:
-            orig_ec = EconomyService.is_eurocontrol_icao(origin_icao)
-            dest_ec = EconomyService.is_eurocontrol_icao(destination_icao)
-            if orig_ec and dest_ec:
-                eurocontrol_factor = 1.0
-            elif orig_ec or dest_ec:
-                eurocontrol_factor = 0.45
+        # 3. Tariffe Rotta / Navigazione Aerea Globale (Eurocontrol, NAV CANADA, Airservices, ANSP ICAO, FAA Esente)
+        orig_clean = (origin_icao or "").strip().upper()
+        dest_clean = (destination_icao or "").strip().upper()
+        if orig_clean or dest_clean:
+            reg_orig = EconomyService.resolve_nav_region(orig_clean or dest_clean)
+            reg_dest = EconomyService.resolve_nav_region(dest_clean or orig_clean)
+            eurocontrol_area = (reg_orig[0] == "EUROCONTROL") or (reg_dest[0] == "EUROCONTROL")
+            if reg_orig[0] == "FAA_DOM" and reg_dest[0] == "FAA_DOM":
+                nav_factor = 0.0
+                unit_rate = 0.0
+                tnc_rates = reg_orig[3]
+                nav_agency = reg_orig[1]
+            elif reg_orig[0] == "FAA_DOM" or reg_dest[0] == "FAA_DOM":
+                other_reg = reg_dest if reg_orig[0] == "FAA_DOM" else reg_orig
+                nav_factor = 0.50
+                unit_rate = other_reg[2]
+                tnc_rates = other_reg[3]
+                nav_agency = other_reg[1]
+            elif reg_orig[0] == reg_dest[0]:
+                nav_factor = 1.0
+                unit_rate = reg_orig[2]
+                tnc_rates = reg_orig[3]
+                nav_agency = reg_orig[1]
             else:
-                eurocontrol_factor = 0.0
+                nav_factor = 1.0
+                unit_rate = round((reg_orig[2] + reg_dest[2]) / 2.0, 2)
+                tnc_rates = {
+                    k: round((reg_orig[3][k] + reg_dest[3][k]) / 2.0, 2)
+                    for k in ("GA", "BIZJET", "AIRLINER")
+                }
+                nav_agency = f"{reg_orig[1]} / {reg_dest[1]}"
         else:
-            eurocontrol_factor = 1.0
+            eurocontrol_area = True
+            nav_factor = 1.0
+            unit_rate = 65.0
+            tnc_rates = {"GA": 15.0, "BIZJET": 75.0, "AIRLINER": 320.0}
+            nav_agency = "EUROCONTROL"
 
         nav_fee = 0.0
-        if is_ifr and eurocontrol_factor > 0 and distance_nm > 0 and mtow_t >= 2.0:
+        if is_ifr and nav_factor > 0 and distance_nm > 0 and mtow_t >= 2.0:
             dist_km = distance_nm * 1.852
-            enroute = math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * 65.0 * eurocontrol_factor
-            tnc_rates = {"GA": 15.0, "BIZJET": 75.0, "AIRLINER": 320.0}
-            tnc = tnc_rates.get(cat, 15.0) * (1.0 if eurocontrol_factor == 1.0 else 0.5)
+            enroute = math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * unit_rate * nav_factor
+            tnc = tnc_rates.get(cat, 15.0) * (1.0 if nav_factor == 1.0 else 0.5)
             nav_fee = round(enroute + tnc, 2)
         nav_exempt_reason = None
         if not is_ifr:
             nav_exempt_reason = "VFR"
-        elif eurocontrol_factor == 0.0:
-            nav_exempt_reason = "EXTRA_EU"
+        elif nav_factor == 0.0:
+            nav_exempt_reason = "FAA_US_DOMESTIC"
         elif mtow_t < 2.0:
             nav_exempt_reason = "MTOW_UNDER_2T"
 
@@ -319,7 +362,8 @@ class EconomyService:
             "landing_fee": landing_fee,
             "nav_fee": nav_fee,
             "nav_exempt_reason": nav_exempt_reason,
-            "eurocontrol_area": eurocontrol_factor > 0,
+            "nav_agency": nav_agency,
+            "eurocontrol_area": eurocontrol_area,
             "handling_fee": handling_fee,
             "maint_reserve_cost": maint_reserve_cost,
             "ioc_cost": ioc_cost,
@@ -852,8 +896,8 @@ class EconomyService:
                 ]
             },
             "eurocontrol_and_handling_rules": {
-                "formula": "Eurocontrol+TNC (UE IFR) + FBO/Ground Handling + Riserva Manutenzione Oraria + Costi Indiretti (IOC 2%–8%)",
-                "notes": "In modalità REALISTICA (margini netti 4%–12%), ogni volo IFR paga handling, riserve motori/check-C e distribuzione/EU261. Voli extra-UE (es. USA) e VFR sono esenti da Eurocontrol."
+                "formula": "Tariffe ANSP Globali (IFR ≥ 2t) + TNC + FBO/Handling + Riserva Manutenzione + IOC",
+                "notes": "Voli USA domestici (FAA K*/P*/TJ/TI), VFR e MTOW < 2t sono esenti (€ 0). Regioni IFR a pagamento: EUROCONTROL € 65/u, NAV CANADA € 55/u, Airservices AU/NZ € 52/u, ANSP Regionale ICAO (Asia/Sud America/Africa) € 40/u."
             },
             "reputation_rules": {
                 "formula": "Reputazione (0–100%) modifica i ricavi charter (+10% se >=95%, +5% extra per Butter Landing) e genera penali per atterraggi duri",

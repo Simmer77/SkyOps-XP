@@ -373,12 +373,13 @@ class FlightTracker:
                     company=company
                 )
             if financials["nav_fee"] > 0:
+                nav_agency = financials.get("nav_agency", "ANSP / Sorvolo")
                 await EconomyService.record_transaction(
                     session=session,
                     category="NAV_FEE",
-                    title=f"Navigazione Eurocontrol {route_str}",
+                    title=f"Navigazione {nav_agency} {route_str}",
                     amount_eur=-financials["nav_fee"],
-                    description=f"Tariffa di rotta IFR su {dist_nm:.0f} NM per {aircraft.tail_number}",
+                    description=f"Tariffa di rotta IFR & TNC ({nav_agency}) su {dist_nm:.0f} NM per {aircraft.tail_number}",
                     aircraft_tail=aircraft.tail_number,
                     flight_id=log.id,
                     company=company
