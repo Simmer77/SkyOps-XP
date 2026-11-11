@@ -1950,7 +1950,13 @@ export default function App() {
                     <div className="flex justify-between items-center">
                       <span className="text-slate-400">(-) Navigazione Eurocontrol:</span>
                       <span className={lastFlightSummary.financials?.nav_fee > 0 ? 'text-rose-400' : 'text-slate-400'}>
-                        {lastFlightSummary.financials?.nav_fee > 0 ? `-${formatEuro(lastFlightSummary.financials.nav_fee)}` : '€ 0,00 (Esente VFR)'}
+                        {lastFlightSummary.financials?.nav_fee > 0
+                          ? `-${formatEuro(lastFlightSummary.financials.nav_fee)}`
+                          : lastFlightSummary.financials?.nav_exempt_reason === 'EXTRA_EU'
+                            ? '€ 0,00 (Extra-UE / No Eurocontrol)'
+                            : lastFlightSummary.financials?.nav_exempt_reason === 'MTOW_UNDER_2T'
+                              ? '€ 0,00 (< 2t Esente)'
+                              : '€ 0,00 (Esente VFR)'}
                       </span>
                     </div>
                     {lastFlightSummary.financials?.handling_fee > 0 && (

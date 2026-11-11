@@ -225,7 +225,9 @@ class FlightTracker:
                 company_reputation=old_reputation,
                 touchdown_rating=self.touchdown_rating,
                 max_g=self.max_g,
-                min_g=self.min_g
+                min_g=self.min_g,
+                origin_icao=orig_icao,
+                destination_icao=final_dest
             )
             company.reputation = financials["new_reputation"]
             

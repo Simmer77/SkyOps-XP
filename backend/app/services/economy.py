@@ -75,6 +75,14 @@ CATEGORY_SPECS = {
 
 class EconomyService:
     @staticmethod
+    def is_eurocontrol_icao(icao: Optional[str]) -> bool:
+        """Restituisce True solo per aeroporti nello spazio aereo Eurocontrol / Europa."""
+        code = (icao or "").strip().upper()
+        if not code:
+            return False
+        return code[0] in ("E", "L", "B") or code.startswith(("GC", "GM", "UD", "UG"))
+
+    @staticmethod
     def calculate_flight_financials(
         category: str,
         fuel_burned_kg: float,
@@ -92,13 +100,16 @@ class EconomyService:
         company_reputation: float = 100.0,
         touchdown_rating: Optional[str] = None,
         max_g: float = 1.0,
-        min_g: float = 1.0
+        min_g: float = 1.0,
+        origin_icao: str = "",
+        destination_icao: str = ""
     ) -> Dict[str, Any]:
         """
         Calcola il bilancio finanziario completo del volo in Euro (€):
         - Carburante: € 0 a fine volo (pagato al rifornimento)
         - Tassa atterraggio (scontata a Base Operativa)
-        - Navigazione Eurocontrol & Handling/Catering Pax (esenti sui voli VFR)
+        - Navigazione Eurocontrol (solo voli IFR nello spazio Eurocontrol/Europeo; esenti USA/extra-UE e VFR)
+        - Handling/Catering Pax (esenti sui voli VFR)
         - Equipaggio (Freelance orario vs Assunto Fisso € 0/volo vs Solo VFR € 0)
         - Bonus Qualità / Reputazione & Penali Hard Landing / Over-G
         """
@@ -117,12 +128,31 @@ class EconomyService:
             discount_pct = 0
         landing_fee = round(base_fee * multiplier, 2)
 
-        # 3. Tariffe Rotta / Navigazione Eurocontrol (solo IFR e MTOW >= 2.0 t)
+        # 3. Tariffe Rotta / Navigazione Eurocontrol (solo IFR, MTOW >= 2.0 t e almeno un aeroporto nello spazio Eurocontrol)
         mtow_t = (mtow_kg / 1000.0) if (mtow_kg and mtow_kg > 0) else specs["avg_mtow_tonnes"]
+        if origin_icao or destination_icao:
+            orig_ec = EconomyService.is_eurocontrol_icao(origin_icao)
+            dest_ec = EconomyService.is_eurocontrol_icao(destination_icao)
+            if orig_ec and dest_ec:
+                eurocontrol_factor = 1.0
+            elif orig_ec or dest_ec:
+                eurocontrol_factor = 0.45
+            else:
+                eurocontrol_factor = 0.0
+        else:
+            eurocontrol_factor = 1.0
+
         nav_fee = 0.0
-        if is_ifr and distance_nm > 0 and mtow_t >= 2.0:
+        if is_ifr and eurocontrol_factor > 0 and distance_nm > 0 and mtow_t >= 2.0:
             dist_km = distance_nm * 1.852
-            nav_fee = round(math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * 65.0, 2)
+            nav_fee = round(math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * 65.0 * eurocontrol_factor, 2)
+        nav_exempt_reason = None
+        if not is_ifr:
+            nav_exempt_reason = "VFR"
+        elif eurocontrol_factor == 0.0:
+            nav_exempt_reason = "EXTRA_EU"
+        elif mtow_t < 2.0:
+            nav_exempt_reason = "MTOW_UNDER_2T"
 
         # 4. Catering & Handling Passeggeri (solo commerciale IFR con passeggeri a bordo)
         handling_fee = 0.0
@@ -194,6 +224,8 @@ class EconomyService:
             "fuel_cost": fuel_cost,
             "landing_fee": landing_fee,
             "nav_fee": nav_fee,
+            "nav_exempt_reason": nav_exempt_reason,
+            "eurocontrol_area": eurocontrol_factor > 0,
             "handling_fee": handling_fee,
             "lease_cost": lease_cost,
             "crew_cost": crew_cost,
@@ -715,7 +747,7 @@ class EconomyService:
             },
             "eurocontrol_and_handling_rules": {
                 "formula": "Tassa Sorvolo Eurocontrol = √(MTOW_t / 50) × (Distanza_km / 100) × 65 € | Handling Pax = Pax × Tariffa (€15 GA / €45 Biz / €18 Airliner)",
-                "notes": "Applicato ai voli IFR commerciali (aeromobili >= 2.0 t). I voli in regole VFR sono esentati da tasse di rotta Eurocontrol e Catering/Handling passeggeri."
+                "notes": "Eurocontrol si applica solo alle tratte IFR in spazio aereo Europeo (ICAO E*/L*/B*/GC*/GM*, ≥2t). Voli interamente extra-UE (es. USA K*, Canada, Asia) e voli VFR sono completamente esenti (€ 0)."
             },
             "reputation_rules": {
                 "formula": "Reputazione (0–100%) modifica i ricavi charter (+10% se >=95%, +5% extra per Butter Landing) e genera penali per atterraggi duri",
