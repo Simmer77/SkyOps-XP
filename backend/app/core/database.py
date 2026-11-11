@@ -54,7 +54,17 @@ async def init_db():
 
         extra_migrations = [
             ("jobs", "exclude_crew_cost", "BOOLEAN DEFAULT 0"),
+            ("jobs", "flight_rules", "TEXT DEFAULT 'IFR'"),
+            ("jobs", "tour_id", "INTEGER"),
             ("flight_logs", "crew_cost_usd", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "nav_fee_eur", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "handling_fee_eur", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "reputation_delta", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "reputation_bonus_eur", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "penalty_eur", "FLOAT DEFAULT 0.0"),
+            ("flight_logs", "flight_rules", "TEXT DEFAULT 'IFR'"),
+            ("flight_logs", "pax_count", "INTEGER DEFAULT 0"),
+            ("flight_logs", "tour_id", "INTEGER"),
             ("company", "operating_month", "TEXT DEFAULT ''"),
             ("aircraft", "monthly_payment_eur", "FLOAT DEFAULT 0.0"),
             ("aircraft", "remaining_payments_months", "INTEGER DEFAULT 0"),

@@ -74,7 +74,18 @@ export default function App() {
   const [dispatchMode, setDispatchMode] = useState('simbrief'); // 'simbrief' | 'manual'
   const [planIsCommercial, setPlanIsCommercial] = useState(true); // Default: tutti i voli ad incasso
   const [planExcludeCrew, setPlanExcludeCrew] = useState(false); // Escludi costi equipaggio (es. Volo Solo VFR)
+  const [planFlightRules, setPlanFlightRules] = useState('IFR'); // 'IFR' | 'VFR' (VFR esenta Eurocontrol & Handling)
+  const [planTourId, setPlanTourId] = useState(''); // Optional Tour ID (es. IVAO World Tour)
   const [crewOverride, setCrewOverride] = useState(null); // Override manuale in HUD (null = usa piano/tracker)
+  const [flightRulesOverride, setFlightRulesOverride] = useState(null); // 'IFR' | 'VFR' | null
+  const [flightTourOverride, setFlightTourOverride] = useState(undefined); // undefined = usa piano, ''/id = override
+  const [crewRoster, setCrewRoster] = useState(null);
+  const [toursList, setToursList] = useState([]);
+  const [selectedTourId, setSelectedTourId] = useState(null);
+  const [selectedTourDetail, setSelectedTourDetail] = useState(null);
+  const [logbookSubTab, setLogbookSubTab] = useState('flights'); // 'flights' | 'tours'
+  const [newTourName, setNewTourName] = useState('');
+  const [newTourDesc, setNewTourDesc] = useState('');
   const [manualPlan, setManualPlan] = useState({
     origin_icao: '',
     destination_icao: '',
@@ -302,6 +313,141 @@ export default function App() {
     }
   };
 
+  const fetchCrewRoster = async () => {
+    try {
+      const res = await fetch('/api/crew/');
+      if (res.ok) setCrewRoster(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const handleHireCrew = async (category) => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/crew/hire', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        await Promise.all([fetchCrewRoster(), fetchFinances(), fetchActiveFlight()]);
+      } else {
+        showNotice(data.detail || 'Errore assunzione equipaggio', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di rete assunzione equipaggio', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFireCrew = async (crewId) => {
+    if (!confirm('Vuoi chiudere il contratto mensile di questo equipaggio e tornare al regime freelance per volo?')) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/crew/${crewId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'info');
+        await Promise.all([fetchCrewRoster(), fetchFinances(), fetchActiveFlight()]);
+      } else {
+        showNotice(data.detail || 'Errore chiusura contratto', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di rete', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTours = async () => {
+    try {
+      const res = await fetch('/api/tours/');
+      if (res.ok) {
+        const list = await res.json();
+        setToursList(list);
+        if (list.length > 0 && !selectedTourId) {
+          setSelectedTourId(list[0].id);
+          fetchTourDetail(list[0].id);
+        } else if (selectedTourId) {
+          const stillExists = list.some(t => t.id === selectedTourId);
+          if (stillExists) fetchTourDetail(selectedTourId);
+          else {
+            setSelectedTourId(list[0]?.id || null);
+            if (list[0]) fetchTourDetail(list[0].id);
+            else setSelectedTourDetail(null);
+          }
+        }
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchTourDetail = async (tourId) => {
+    if (!tourId) { setSelectedTourDetail(null); return; }
+    try {
+      const res = await fetch(`/api/tours/${tourId}`);
+      if (res.ok) setSelectedTourDetail(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const handleCreateTour = async (customName = null) => {
+    const nameToUse = (customName ?? newTourName).trim();
+    if (!nameToUse) {
+      showNotice('Inserisci il nome del Tour (es. IVAO World Tour)', 'error');
+      return null;
+    }
+    try {
+      const res = await fetch('/api/tours/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameToUse, description: newTourDesc.trim() })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'success');
+        setNewTourName('');
+        setNewTourDesc('');
+        await fetchTours();
+        setSelectedTourId(data.tour.id);
+        fetchTourDetail(data.tour.id);
+        return data.tour;
+      } else {
+        showNotice(data.detail || 'Errore creazione tour', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di rete creazione tour', 'error');
+    }
+    return null;
+  };
+
+  const handleDeleteTour = async (tourId) => {
+    if (!confirm('Eliminare questo Tour? I voli effettuati resteranno salvati nel normale Logbook.')) return;
+    try {
+      const res = await fetch(`/api/tours/${tourId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (res.ok) {
+        showNotice(data.message, 'info');
+        fetchTours();
+      }
+    } catch (e) { showNotice('Errore eliminazione tour', 'error'); }
+  };
+
+  const handleToggleTourStatus = async (tour) => {
+    const nextStatus = tour.status === 'ACTIVE' ? 'COMPLETED' : 'ACTIVE';
+    try {
+      const res = await fetch(`/api/tours/${tour.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      if (res.ok) {
+        showNotice(`Tour "${tour.name}" impostato su ${nextStatus}`, 'success');
+        fetchTours();
+      }
+    } catch (e) { showNotice('Errore aggiornamento tour', 'error'); }
+  };
+
   const handlePayoffAircraftDebt = async (aircraft) => {
     if (!aircraft) return;
     const debt = aircraft.financed_amount_remaining_eur || 0;
@@ -455,22 +601,33 @@ export default function App() {
     fetchActiveFlight();
     fetchHistory();
     fetchFinances();
+    fetchCrewRoster();
+    fetchTours();
   }, []);
 
   useEffect(() => {
     if (activeTab === 'finances') {
       fetchFinances();
+      fetchCrewRoster();
+    } else if (activeTab === 'logbook') {
+      fetchHistory();
+      fetchTours();
     } else if (activeTab === 'rental') {
       fetchMarket();
     } else if (activeTab === 'flight') {
       fetchActiveFlight();
+      fetchTours();
     } else if (activeTab === 'fleet') {
       const owned = fleet.filter((a) => a.ownership === 'OWNED');
       if (owned.length > 0 && (!selectedAircraft || selectedAircraft.ownership !== 'OWNED')) {
         setSelectedAircraft(owned[0]);
       }
-    } else if (activeTab === 'simbrief' && selectedAircraft && !manualPlan.origin_icao) {
-      setManualPlan(prev => ({ ...prev, origin_icao: selectedAircraft.current_icao || '' }));
+    } else if (activeTab === 'simbrief') {
+      fetchTours();
+      fetchCrewRoster();
+      if (selectedAircraft && !manualPlan.origin_icao) {
+        setManualPlan(prev => ({ ...prev, origin_icao: selectedAircraft.current_icao || '' }));
+      }
     }
   }, [activeTab, fleet]);
 
@@ -492,6 +649,8 @@ export default function App() {
 
   useEffect(() => {
     setCrewOverride(null);
+    setFlightRulesOverride(null);
+    setFlightTourOverride(undefined);
   }, [selectedAircraft?.id]);
 
   // 2. WebSocket Telemetry Stream
@@ -809,12 +968,16 @@ export default function App() {
           pilot_id: isNumericId ? cleaned : null,
           aircraft_id: selectedAircraft.id,
           is_commercial: planIsCommercial,
-          exclude_crew_cost: planExcludeCrew
+          exclude_crew_cost: planExcludeCrew,
+          flight_rules: planFlightRules,
+          tour_id: planTourId ? parseInt(planTourId, 10) : null
         })
       });
       const data = await res.json();
       if (res.ok) {
         setCrewOverride(null);
+        setFlightRulesOverride(null);
+        setFlightTourOverride(undefined);
         showNotice(`${data.message} Vai in Plancia per completare i controlli Pre-Volo.`, 'success');
         await Promise.all([fetchFleet(), fetchActiveFlight(selectedAircraft.id)]);
         setActiveTab('flight');
@@ -871,12 +1034,16 @@ export default function App() {
           cargo_kg: parseFloat(manualPlan.cargo_kg) || 0.0,
           route: manualPlan.route,
           is_commercial: planIsCommercial,
-          exclude_crew_cost: planExcludeCrew
+          exclude_crew_cost: planExcludeCrew,
+          flight_rules: planFlightRules,
+          tour_id: planTourId ? parseInt(planTourId, 10) : null
         })
       });
       const data = await res.json();
       if (res.ok) {
         setCrewOverride(null);
+        setFlightRulesOverride(null);
+        setFlightTourOverride(undefined);
         showNotice(data.message, 'success');
         await Promise.all([fetchFleet(), fetchActiveFlight(selectedAircraft.id)]);
         setActiveTab('flight');
@@ -900,19 +1067,25 @@ export default function App() {
     }
     try {
       const effectiveExcludeCrew = crewOverride !== null ? crewOverride : Boolean(activeFlight?.exclude_crew_cost);
+      const effectiveRules = flightRulesOverride || activeFlight?.flight_rules || 'IFR';
+      const effectiveTourId = flightTourOverride !== undefined ? (flightTourOverride ? parseInt(flightTourOverride, 10) : null) : (activeFlight?.tour_id || null);
       const res = await fetch('/api/flights/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           aircraft_id: selectedAircraft.id,
           job_id: jobId || activeFlight?.job?.id || null,
-          exclude_crew_cost: effectiveExcludeCrew
+          exclude_crew_cost: effectiveExcludeCrew,
+          flight_rules: effectiveRules,
+          tour_id: effectiveTourId
         })
       });
       const data = await res.json();
       if (res.ok) {
         setLastFlightSummary(null);
         setCrewOverride(null);
+        setFlightRulesOverride(null);
+        setFlightTourOverride(undefined);
         showNotice(data.message || `Volo avviato per ${selectedAircraft.tail_number}!`, 'success');
         fetchStatus();
         fetchFleet();
@@ -969,8 +1142,12 @@ export default function App() {
     setLoading(true);
     try {
       const effectiveExcludeCrew = crewOverride !== null ? crewOverride : Boolean(activeFlight?.exclude_crew_cost);
+      const effectiveRules = flightRulesOverride || activeFlight?.flight_rules || 'IFR';
+      const effectiveTourId = flightTourOverride !== undefined ? (flightTourOverride ? parseInt(flightTourOverride, 10) : null) : (activeFlight?.tour_id || null);
       const payload = {
         exclude_crew_cost: effectiveExcludeCrew,
+        flight_rules: effectiveRules,
+        tour_id: effectiveTourId,
         ...((showDiversionPanel && actualArrivalIcao.trim())
           ? {
               actual_arrival_icao: actualArrivalIcao.trim().toUpperCase(),
@@ -987,6 +1164,8 @@ export default function App() {
       if (res.ok) {
         setLastFlightSummary(data.summary);
         setCrewOverride(null);
+        setFlightRulesOverride(null);
+        setFlightTourOverride(undefined);
         showNotice(`Volo completato! Utile netto: ${formatEuro(data.summary.financials.net_profit)}`, 'success');
         setShowDiversionPanel(false);
         setActualArrivalIcao('');
@@ -996,6 +1175,7 @@ export default function App() {
         fetchActiveFlight();
         fetchHistory();
         fetchFinances();
+        fetchTours();
       } else {
         showNotice(data.detail, 'error');
       }
@@ -1434,28 +1614,64 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2.5">
                   {selectedAircraft && (() => {
                     const isCrewExcluded = crewOverride !== null ? crewOverride : Boolean(activeFlight?.exclude_crew_cost);
+                    const hasSalaried = Boolean(activeFlight?.has_salaried_crew);
+                    const effRules = flightRulesOverride || activeFlight?.flight_rules || 'IFR';
+                    const effTourVal = flightTourOverride !== undefined ? flightTourOverride : (activeFlight?.tour_id ? String(activeFlight.tour_id) : '');
                     const crewSpec = activeFlight?.crew_spec || {
                       label: selectedAircraft.category === 'AIRLINER' ? '2 Piloti + 4 A/V' : selectedAircraft.category === 'BIZJET' ? '2 Piloti + 1 A/V' : '1 Pilota',
                       hourly_rate_eur: selectedAircraft.category === 'AIRLINER' ? 520 : selectedAircraft.category === 'BIZJET' ? 240 : 90
                     };
                     return (
-                      <button
-                        type="button"
-                        onClick={() => setCrewOverride(!isCrewExcluded)}
-                        className={`flex items-center gap-1.5 font-mono text-xs font-semibold px-3 py-2 rounded-lg border transition ${
-                          isCrewExcluded
-                            ? 'bg-amber-950/40 border-amber-500/50 text-amber-300 hover:bg-amber-900/40'
-                            : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200 hover:bg-indigo-900/40'
-                        }`}
-                        title="Clicca per includere o escludere il costo orario di piloti e assistenti di volo (es. Volo Solo VFR)"
-                      >
-                        {isCrewExcluded
-                          ? '🧑‍✈️ Volo Solo VFR (Equipaggio € 0)'
-                          : `👨‍✈️ Equipaggio: ${crewSpec.label} (€ ${crewSpec.hourly_rate_eur}/h)`}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setCrewOverride(!isCrewExcluded)}
+                          className={`flex items-center gap-1.5 font-mono text-xs font-semibold px-3 py-2 rounded-lg border transition ${
+                            isCrewExcluded
+                              ? 'bg-amber-950/40 border-amber-500/50 text-amber-300 hover:bg-amber-900/40'
+                              : hasSalaried
+                                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200 hover:bg-emerald-900/40'
+                                : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200 hover:bg-indigo-900/40'
+                          }`}
+                          title="Clicca per escludere/includere equipaggio (es. Volo Solo VFR)"
+                        >
+                          {isCrewExcluded
+                            ? '🧑‍✈️ Volo Solo (Equip. € 0)'
+                            : hasSalaried
+                              ? `👨‍✈️ Equip. Fisso (${crewSpec.label} • € 0/h)`
+                              : `👨‍✈️ Equipaggio: ${crewSpec.label} (€ ${crewSpec.hourly_rate_eur}/h)`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFlightRulesOverride(effRules === 'IFR' ? 'VFR' : 'IFR')}
+                          className={`font-mono text-xs font-bold px-3 py-2 rounded-lg border transition ${
+                            effRules === 'VFR'
+                              ? 'bg-sky-950/40 border-sky-400/50 text-sky-300 hover:bg-sky-900/40'
+                              : 'bg-slate-800/80 border-slate-700 text-cyan-300 hover:bg-slate-700'
+                          }`}
+                          title="IFR paga Eurocontrol & Handling Pax; VFR è esente"
+                        >
+                          {effRules === 'VFR' ? '🌤️ VFR (No Eurocontrol)' : '🛫 IFR (Eurocontrol ON)'}
+                        </button>
+                        {toursList.length > 0 && (
+                          <select
+                            value={effTourVal}
+                            onChange={(e) => setFlightTourOverride(e.target.value)}
+                            className="bg-slate-900 border border-slate-700 text-amber-300 font-mono text-xs font-semibold px-2.5 py-2 rounded-lg focus:outline-none focus:border-amber-400"
+                            title="Associa questo volo a un Tour IVAO"
+                          >
+                            <option value="">🗺️ Nessun Tour</option>
+                            {toursList.map((tr) => (
+                              <option key={tr.id} value={String(tr.id)}>
+                                🗺️ {tr.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </>
                     );
                   })()}
                   {flightPhase === 'OFFLINE' && selectedAircraft && (
@@ -1688,15 +1904,34 @@ export default function App() {
                         {lastFlightSummary.touchdown?.g ? `${lastFlightSummary.touchdown.g} G` : 'N/D'} ({lastFlightSummary.touchdown?.rating || 'OK'})
                       </span>
                     </div>
+                    {lastFlightSummary.reputation && (
+                      <div className="flex justify-between pt-1 border-t border-slate-800/80">
+                        <span className="text-slate-400">Reputazione Azienda:</span>
+                        <span className={`font-bold ${lastFlightSummary.reputation.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {lastFlightSummary.reputation.new}% ({lastFlightSummary.reputation.delta >= 0 ? '+' : ''}{lastFlightSummary.reputation.delta}%)
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Column 2: Economic Breakdown */}
                   <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
-                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">Conto Economico del Volo</div>
+                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5 flex justify-between">
+                      <span>Conto Economico del Volo</span>
+                      <span className="text-cyan-400">{lastFlightSummary.flight_rules || 'IFR'}</span>
+                    </div>
                     <div className="flex justify-between">
                       <span className="text-emerald-400">(+) Ricavo Lordo Volo:</span>
                       <span className="text-emerald-400 font-bold">+{formatEuro(lastFlightSummary.financials?.gross_revenue)}</span>
                     </div>
+                    {lastFlightSummary.financials?.reputation_bonus_eur !== 0 && lastFlightSummary.financials?.reputation_bonus_eur !== undefined && (
+                      <div className="flex justify-between text-[11px] pl-2">
+                        <span className="text-slate-400">di cui Bonus/Malus Qualità ({lastFlightSummary.financials?.reputation_bonus_pct > 0 ? '+' : ''}{lastFlightSummary.financials?.reputation_bonus_pct}%):</span>
+                        <span className={lastFlightSummary.financials.reputation_bonus_eur >= 0 ? 'text-emerald-300' : 'text-amber-300'}>
+                          {lastFlightSummary.financials.reputation_bonus_eur >= 0 ? '+' : ''}{formatEuro(lastFlightSummary.financials.reputation_bonus_eur)}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-slate-400">Carburante Bruciato:</span>
                       <span className="text-slate-300 font-mono text-[11px]">Già pagato al rifornimento (€ 0,00)</span>
@@ -1712,10 +1947,42 @@ export default function App() {
                       </span>
                       <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials?.landing_fee)}</span>
                     </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">(-) Navigazione Eurocontrol:</span>
+                      <span className={lastFlightSummary.financials?.nav_fee > 0 ? 'text-rose-400' : 'text-slate-400'}>
+                        {lastFlightSummary.financials?.nav_fee > 0 ? `-${formatEuro(lastFlightSummary.financials.nav_fee)}` : '€ 0,00 (Esente VFR)'}
+                      </span>
+                    </div>
+                    {lastFlightSummary.financials?.handling_fee > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">(-) Catering & Handling Pax:</span>
+                        <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.handling_fee)}</span>
+                      </div>
+                    )}
                     {lastFlightSummary.financials?.lease_cost > 0 && (
                       <div className="flex justify-between">
                         <span className="text-slate-400">(-) Canone Noleggio Orario:</span>
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.lease_cost)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        (-) Equipaggio:
+                        {lastFlightSummary.financials?.crew_source === 'SOLO_VFR' && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">SOLO</span>
+                        )}
+                        {lastFlightSummary.financials?.crew_source === 'SALARIED' && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">FISSO</span>
+                        )}
+                      </span>
+                      <span className={lastFlightSummary.financials?.crew_cost > 0 ? 'text-rose-400' : 'text-slate-400'}>
+                        {lastFlightSummary.financials?.crew_cost > 0 ? `-${formatEuro(lastFlightSummary.financials.crew_cost)}` : '€ 0,00'}
+                      </span>
+                    </div>
+                    {lastFlightSummary.financials?.penalty_eur > 0 && (
+                      <div className="flex justify-between text-rose-300 font-bold">
+                        <span>(-) Penale / Risarcimento Touchdown:</span>
+                        <span>-{formatEuro(lastFlightSummary.financials.penalty_eur)}</span>
                       </div>
                     )}
                     <div className="flex justify-between items-center">
@@ -3265,38 +3532,107 @@ export default function App() {
               </div>
 
               {/* Crew Cost Toggle Option */}
-              <div
-                onClick={() => setPlanExcludeCrew(!planExcludeCrew)}
-                className={`mt-2 p-3 rounded-xl border cursor-pointer transition flex flex-wrap items-center justify-between gap-3 ${
-                  planExcludeCrew
-                    ? 'bg-amber-950/25 border-amber-500/50'
-                    : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <input
-                    type="checkbox"
-                    checked={planExcludeCrew}
-                    onChange={(e) => setPlanExcludeCrew(e.target.checked)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
-                  />
-                  <div>
-                    <span className={`font-mono text-xs font-bold ${planExcludeCrew ? 'text-amber-300' : 'text-slate-200'}`}>
-                      🧑‍✈️ Escludi Costo Equipaggio (Volo Solo / VFR / Pilota Proprietario)
+              {(() => {
+                const selectedCat = selectedAircraft?.category || 'GA';
+                const hasSalaried = crewRoster?.hired?.some(c => c.category === selectedCat && c.is_active);
+                return (
+                  <div
+                    onClick={() => setPlanExcludeCrew(!planExcludeCrew)}
+                    className={`mt-2 p-3 rounded-xl border cursor-pointer transition flex flex-wrap items-center justify-between gap-3 ${
+                      planExcludeCrew
+                        ? 'bg-amber-950/25 border-amber-500/50'
+                        : 'bg-slate-900/50 border-slate-800 hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={planExcludeCrew}
+                        onChange={(e) => setPlanExcludeCrew(e.target.checked)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                      />
+                      <div>
+                        <span className={`font-mono text-xs font-bold ${planExcludeCrew ? 'text-amber-300' : 'text-slate-200'}`}>
+                          🧑‍✈️ Escludi Costo Equipaggio (Volo Solo / VFR / Pilota Proprietario)
+                        </span>
+                        <p className="text-[11px] text-slate-400 font-sans">
+                          {planExcludeCrew
+                            ? 'Attivo: nessun costo orario di piloti o assistenti di volo verrà addebitato.'
+                            : hasSalaried
+                              ? `Coperto da Equipaggio Fisso Assunto (${selectedCat}): € 0/ora in volo (già nello stipendio mensile).`
+                              : `Freelance (${selectedCat}): verrà addebitato a ora di volo (${selectedCat === 'AIRLINER' ? '2 Piloti + 4 A/V • € 520/h' : selectedCat === 'BIZJET' ? '2 Piloti + 1 A/V • € 240/h' : '1 Pilota • € 90/h'}).`}
+                        </p>
+                      </div>
+                    </div>
+                    <span className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded ${
+                      planExcludeCrew ? 'bg-amber-500/20 text-amber-300' : hasSalaried ? 'bg-emerald-500/20 text-emerald-300' : 'bg-indigo-500/20 text-indigo-300'
+                    }`}>
+                      {planExcludeCrew ? 'EQUIPAGGIO € 0' : hasSalaried ? 'ASSUNTO FISSO (€ 0/h)' : 'FREELANCE'}
                     </span>
-                    <p className="text-[11px] text-slate-400 font-sans">
-                      {planExcludeCrew
-                        ? 'Attivo: nessun costo orario di piloti o assistenti di volo verrà addebitato (ideale per voli privati VFR).'
-                        : `Standard (${selectedAircraft?.category || 'GA'}): verrà addebitato l'equipaggio di linea (${selectedAircraft?.category === 'AIRLINER' ? '2 Piloti + 4 A/V • € 520/h' : selectedAircraft?.category === 'BIZJET' ? '2 Piloti + 1 A/V • € 240/h' : '1 Pilota • € 90/h'}).`}
-                    </p>
+                  </div>
+                );
+              })()}
+
+              {/* Regole IFR/VFR & Associazione Tour IVAO */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 font-mono text-xs">
+                <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-bold text-slate-200">Regole di Volo (Eurocontrol & Handling)</div>
+                    <div className="text-[11px] text-slate-400 font-sans">
+                      {planFlightRules === 'IFR'
+                        ? 'IFR: applica tasse di sorvolo Eurocontrol e Catering/Handling Pax.'
+                        : 'VFR: esente da tasse di rotta Eurocontrol e Handling Pax.'}
+                    </div>
+                  </div>
+                  <div className="flex bg-slate-950 border border-slate-800 p-0.5 rounded-lg shrink-0">
+                    {['IFR', 'VFR'].map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setPlanFlightRules(r)}
+                        className={`px-3 py-1 rounded font-bold transition ${
+                          planFlightRules === r
+                            ? (r === 'VFR' ? 'bg-sky-600 text-white' : 'bg-cyan-600 text-white')
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <span className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded ${
-                  planExcludeCrew ? 'bg-amber-500/20 text-amber-300' : 'bg-indigo-500/20 text-indigo-300'
-                }`}>
-                  {planExcludeCrew ? 'EQUIPAGGIO € 0' : 'EQUIPAGGIO INCLUSO'}
-                </span>
+
+                <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                    <span className="text-amber-300 font-bold shrink-0">🗺️ Tour:</span>
+                    <select
+                      value={planTourId}
+                      onChange={(e) => setPlanTourId(e.target.value)}
+                      className="flex-1 bg-slate-950 border border-slate-700 text-white px-2.5 py-1.5 rounded-lg text-xs focus:outline-none focus:border-amber-400"
+                    >
+                      <option value="">Nessun Tour (Volo singolo)</option>
+                      {toursList.map((tr) => (
+                        <option key={tr.id} value={String(tr.id)}>
+                          {tr.name} ({tr.legs_count} tappe)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const tName = prompt('Nome del nuovo Tour (es. IVAO World Tour 2026):');
+                      if (tName) {
+                        const created = await handleCreateTour(tName);
+                        if (created) setPlanTourId(String(created.id));
+                      }
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/35 text-amber-300 border border-amber-500/40 font-bold text-[11px] transition"
+                  >
+                    + Nuovo Tour
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -3740,9 +4076,10 @@ export default function App() {
               </div>
 
               {/* Sub-Tabs Switcher */}
-              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-lg text-xs font-mono">
+              <div className="flex flex-wrap items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-lg text-xs font-mono">
                 {[
                   { id: 'overview', label: 'Quadro & Bilancio', icon: FileText },
+                  { id: 'crew', label: `Personale Fisso (${crewRoster?.hired?.length || 0})`, icon: Shield },
                   { id: 'ledger', label: `Registro Cassa (${financialLedger.length})`, icon: Wallet },
                   { id: 'rules', label: 'Regole & Formule', icon: HelpCircle }
                 ].map((st) => {
@@ -3808,7 +4145,7 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-[11px] font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono bg-slate-900/60 p-2 rounded border border-slate-800/80">
                     <div>
                       <span className="text-slate-400 block">Hangar/Mese:</span>
                       <span className="text-slate-200 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_hangar_eur || 0)}</span>
@@ -3820,6 +4157,10 @@ export default function App() {
                     <div>
                       <span className="text-slate-400 block">Rate/Mese:</span>
                       <span className="text-amber-300 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_financing_eur || 0)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block">Stipendi/Mese:</span>
+                      <span className="text-indigo-300 font-semibold">{formatEuro(financialOverview?.upcoming_fixed_costs_monthly?.total_crew_salaries_eur || 0)}</span>
                     </div>
                   </div>
 
@@ -4062,9 +4403,21 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Tasse Atterraggio & Handling (MTOW)</span>
+                            <span>Tasse Atterraggio (MTOW / Base)</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.landing_fees_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Sorvolo & Navigazione Eurocontrol (IFR)</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.nav_fees_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Catering & Handling Passeggeri</span>
+                            <span className="text-slate-200">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.handling_fees_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
@@ -4074,9 +4427,15 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Equipaggio & Personale di Bordo (Piloti / A.V.)</span>
+                            <span>Equipaggio Freelance a Volo (Piloti / A.V.)</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.crew_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Penali & Risarcimenti Touchdown</span>
+                            <span className="text-rose-300">
+                              {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.penalties_eur ?? 0)}
                             </span>
                           </div>
                         </div>
@@ -4098,14 +4457,14 @@ export default function App() {
                       {/* (-) Costi Fissi di Gestione */}
                       <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
                         <div className="flex justify-between items-center font-bold text-slate-300">
-                          <span>(-) ONERI FISSI STRUTTURALI</span>
+                          <span>(-) ONERI FISSI MENSILI</span>
                           <span className="text-rose-400">
                             -{formatEuro(financialOverview?.income_statement?.fixed_overheads?.total_eur ?? 0)}
                           </span>
                         </div>
                         <div className="pl-3 space-y-1 text-slate-400">
                           <div className="flex justify-between items-center">
-                            <span>Rimessaggio & Hangaraggio Settimanale</span>
+                            <span>Rimessaggio & Hangaraggio Mensile</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.hangar_eur ?? 0)}
                             </span>
@@ -4120,6 +4479,12 @@ export default function App() {
                             <span>Rate Leasing Finanziario & Mutui</span>
                             <span className="text-amber-300">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.financing_eur ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span>Stipendi Mensili Equipaggi Assunti</span>
+                            <span className="text-indigo-300">
+                              {formatEuro(financialOverview?.income_statement?.fixed_overheads?.crew_salaries_eur ?? 0)}
                             </span>
                           </div>
                         </div>
@@ -4147,6 +4512,102 @@ export default function App() {
               </div>
             )}
 
+            {/* SUB-VIEW 1B: PERSONALE FISSO VS FREELANCE */}
+            {financeSubTab === 'crew' && (
+              <div className="space-y-6">
+                <div className="glass-panel p-5 rounded-xl border border-indigo-500/30 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-bold text-white flex items-center gap-2">
+                        <Shield size={18} className="text-indigo-400" /> Gestione Equipaggi: Assunto Fisso Mensile vs Freelance
+                      </h3>
+                      <p className="text-xs text-slate-400 font-sans mt-0.5">
+                        Assumi un equipaggio fisso mensile per una classe di velivoli per azzerare il costo orario su ogni singolo volo (€ 0/h). Ideale se voli più di 20 ore al mese in quella categoria; altrimenti conviene restare in regime Freelance a chiamata.
+                      </p>
+                    </div>
+                    <div className="bg-slate-950/70 px-4 py-2 rounded-lg border border-slate-800 text-right font-mono">
+                      <div className="text-[10px] text-slate-400 uppercase">Monte Stipendi Mensile</div>
+                      <div className="text-lg font-bold text-indigo-300">
+                        {formatEuro(crewRoster?.total_monthly_salaries_eur || 0)} / mese
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 font-mono text-xs">
+                  {(crewRoster?.catalog || []).map((item) => (
+                    <div
+                      key={item.category}
+                      className={`glass-panel p-5 rounded-2xl border space-y-4 flex flex-col justify-between ${
+                        item.is_hired
+                          ? 'border-emerald-500/50 bg-emerald-950/10'
+                          : 'border-slate-800'
+                      }`}
+                    >
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-bold text-[10px]">
+                              CLASSE {item.category}
+                            </span>
+                            <h4 className="text-base font-bold text-white mt-1.5">{item.role_label}</h4>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            item.is_hired
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                          }`}>
+                            {item.is_hired ? 'ASSUNTO FISSO' : 'FREELANCE'}
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 space-y-1.5">
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Stipendio Mensile Fisso:</span>
+                            <span className="text-white font-bold">{formatEuro(item.monthly_salary_eur)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Tariffa Freelance a Volo:</span>
+                            <span className="text-slate-300">{formatEuro(item.freelance_hourly_eur)} / ora</span>
+                          </div>
+                          <div className="flex justify-between pt-1 border-t border-slate-800/80 text-[11px]">
+                            <span className="text-slate-400">Soglia Convenienza:</span>
+                            <span className="text-amber-300 font-bold">&gt; {item.breakeven_hours_per_month} ore / mese</span>
+                          </div>
+                        </div>
+
+                        {item.is_hired && item.hired_member && (
+                          <div className="p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-[11px]">
+                            ✓ Attivo: <strong>{item.hired_member.name}</strong> — tutti i voli {item.category} hanno costo equipaggio orario € 0,00.
+                          </div>
+                        )}
+                      </div>
+
+                      {item.is_hired && item.hired_member ? (
+                        <button
+                          type="button"
+                          onClick={() => handleFireCrew(item.hired_member.id)}
+                          disabled={loading}
+                          className="w-full py-2.5 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-500/40 font-bold transition disabled:opacity-50"
+                        >
+                          Licenzia & Torna a Freelance
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleHireCrew(item.category)}
+                          disabled={loading}
+                          className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow transition disabled:opacity-50"
+                        >
+                          Assumi Equipaggio Fisso ({formatEuro(item.monthly_salary_eur)}/mese)
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* SUB-VIEW 2: LIBRO MASTRO / REGISTRO CASSA (TRANSACTIONS LEDGER) */}
             {financeSubTab === 'ledger' && (
               <div className="space-y-4">
@@ -4161,8 +4622,12 @@ export default function App() {
                       { id: 'REVENUE', label: 'Incassi Voli (+)' },
                       { id: 'FUEL', label: 'Carburante' },
                       { id: 'LANDING_FEE', label: 'Tasse Atterraggio' },
+                      { id: 'NAV_FEE', label: 'Eurocontrol' },
+                      { id: 'HANDLING', label: 'Handling/Catering' },
                       { id: 'MAINTENANCE', label: 'Manutenzione' },
-                      { id: 'CREW', label: 'Equipaggio' },
+                      { id: 'CREW', label: 'Equipaggio Volo' },
+                      { id: 'CREW_SALARY', label: 'Stipendi Fissi' },
+                      { id: 'PENALTY', label: 'Penali' },
                       { id: 'LEASE', label: 'Noleggi' },
                       { id: 'FIXED_HANGAR', label: 'Hangar' },
                       { id: 'FIXED_INSURANCE', label: 'Assicurazioni' },
@@ -4221,9 +4686,11 @@ export default function App() {
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                                   tx.category === 'REVENUE' || tx.category === 'REVENUE_FLIGHT' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
                                   tx.category === 'FUEL' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
-                                  tx.category === 'LANDING_FEE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                                  tx.category === 'LANDING_FEE' || tx.category === 'NAV_FEE' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' :
+                                  tx.category === 'HANDLING' ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30' :
                                   tx.category === 'MAINTENANCE' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                                  tx.category === 'CREW' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
+                                  tx.category === 'CREW' || tx.category === 'CREW_SALARY' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
+                                  tx.category === 'PENALTY' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
                                   tx.category === 'LEASE' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
                                   'bg-slate-800 text-slate-300'
                                 }`}>
@@ -4414,63 +4881,407 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                {/* 7. Eurocontrol & Reputation Rules */}
+                {financialGuide.eurocontrol_and_handling_rules && (
+                  <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm font-mono">
+                      <Radio size={16} /> 7. TARIFFE EUROCONTROL, HANDLING PAX & REPUTAZIONE
+                    </div>
+                    <div className="text-xs text-slate-300 font-mono leading-relaxed space-y-2">
+                      <div>
+                        <div className="font-bold text-white">{financialGuide.eurocontrol_and_handling_rules.formula}</div>
+                        <p className="text-slate-400">{financialGuide.eurocontrol_and_handling_rules.notes}</p>
+                      </div>
+                      {financialGuide.reputation_rules && (
+                        <div className="pt-2 border-t border-slate-800">
+                          <div className="font-bold text-emerald-300">{financialGuide.reputation_rules.formula}</div>
+                          <p className="text-slate-400">{financialGuide.reputation_rules.notes}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
 
-        {/* TAB 8: LOGBOOK */}
+        {/* TAB 8: LOGBOOK & DIARIO TOUR IVAO */}
         {activeTab === 'logbook' && (
           <div className="space-y-6">
-            <h2 className="text-xl font-bold text-white">Registro Storico Voli</h2>
-            
-            <div className="glass-panel rounded-xl border border-slate-800 overflow-hidden">
-              <table className="w-full text-left font-mono text-xs">
-                <thead className="bg-slate-900/80 text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="p-3">Data</th>
-                    <th className="p-3">Volo</th>
-                    <th className="p-3">Rotta</th>
-                    <th className="p-3">Durata</th>
-                    <th className="p-3">Fuel (kg)</th>
-                    <th className="p-3">Touchdown</th>
-                    <th className="p-3">G-Force</th>
-                    <th className="p-3 text-right">Ricavo Netto</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 text-slate-200">
-                  {flightHistory.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-800/30">
-                      <td className="p-3 text-slate-400">{new Date(log.start_time).toLocaleDateString()}</td>
-                      <td className="p-3 font-bold text-cyan-400">{log.flight_number}</td>
-                      <td className="p-3 font-bold">{log.origin_icao} → {log.destination_icao}</td>
-                      <td className="p-3">{log.flight_duration_min} min</td>
-                      <td className="p-3">{log.fuel_used_kg} kg</td>
-                      <td className="p-3">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                          log.touchdown_rating === 'BUTTER' ? 'bg-emerald-500/20 text-emerald-300' :
-                          log.touchdown_rating === 'GOOD' ? 'bg-cyan-500/20 text-cyan-300' :
-                          'bg-amber-500/20 text-amber-300'
-                        }`}>
-                          {log.touchdown_fpm ? `${log.touchdown_fpm} fpm` : 'N/A'}
-                        </span>
-                      </td>
-                      <td className="p-3">{log.touchdown_g ? `${log.touchdown_g} G` : `${log.max_g_force} G`}</td>
-                      <td className={`p-3 text-right font-bold ${log.net_profit_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {formatEuro(log.net_profit_usd)}
-                      </td>
-                    </tr>
-                  ))}
-                  {flightHistory.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500">
-                        Nessun volo registrato finora. Completa il tuo primo volo con SkyOps XP!
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <BookOpen size={22} className="text-cyan-400" /> Registro Voli & Diario Tour IVAO
+                </h2>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  Cronologia completa dei voli e mappa interattiva delle tappe raggruppate per Tour.
+                </p>
+              </div>
+              <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-lg text-xs font-mono">
+                <button
+                  onClick={() => setLogbookSubTab('flights')}
+                  className={`px-3.5 py-1.5 rounded-md transition ${
+                    logbookSubTab === 'flights'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📜 Logbook Voli ({flightHistory.length})
+                </button>
+                <button
+                  onClick={() => setLogbookSubTab('tours')}
+                  className={`px-3.5 py-1.5 rounded-md transition ${
+                    logbookSubTab === 'tours'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  🗺️ Tour & Mappa Rotte ({toursList.length})
+                </button>
+              </div>
             </div>
+
+            {logbookSubTab === 'flights' && (
+              <div className="glass-panel rounded-xl border border-slate-800 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left font-mono text-xs">
+                    <thead className="bg-slate-900/80 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">Data</th>
+                        <th className="p-3">Volo</th>
+                        <th className="p-3">Regole</th>
+                        <th className="p-3">Rotta</th>
+                        <th className="p-3">Durata</th>
+                        <th className="p-3">Fuel (kg)</th>
+                        <th className="p-3">Touchdown</th>
+                        <th className="p-3">G-Force</th>
+                        <th className="p-3 text-right">Ricavo Netto</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                      {flightHistory.map((log) => (
+                        <tr key={log.id} className="hover:bg-slate-800/30">
+                          <td className="p-3 text-slate-400">{new Date(log.start_time).toLocaleDateString()}</td>
+                          <td className="p-3 font-bold text-cyan-400">{log.flight_number}</td>
+                          <td className="p-3">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              log.flight_rules === 'VFR' ? 'bg-sky-500/20 text-sky-300' : 'bg-slate-800 text-slate-300'
+                            }`}>
+                              {log.flight_rules || 'IFR'}
+                            </span>
+                          </td>
+                          <td className="p-3 font-bold">{log.origin_icao} → {log.destination_icao}</td>
+                          <td className="p-3">{log.flight_duration_min} min</td>
+                          <td className="p-3">{log.fuel_used_kg} kg</td>
+                          <td className="p-3">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              log.touchdown_rating === 'BUTTER' ? 'bg-emerald-500/20 text-emerald-300' :
+                              log.touchdown_rating === 'GOOD' ? 'bg-cyan-500/20 text-cyan-300' :
+                              'bg-amber-500/20 text-amber-300'
+                            }`}>
+                              {log.touchdown_fpm ? `${log.touchdown_fpm} fpm` : 'N/A'}
+                            </span>
+                          </td>
+                          <td className="p-3">{log.touchdown_g ? `${log.touchdown_g} G` : `${log.max_g_force} G`}</td>
+                          <td className={`p-3 text-right font-bold ${log.net_profit_usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {formatEuro(log.net_profit_usd)}
+                          </td>
+                        </tr>
+                      ))}
+                      {flightHistory.length === 0 && (
+                        <tr>
+                          <td colSpan={9} className="p-8 text-center text-slate-500">
+                            Nessun volo registrato finora. Completa il tuo primo volo con SkyOps XP!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {logbookSubTab === 'tours' && (
+              <div className="space-y-6">
+                {/* Create Tour Bar + Tour Pills */}
+                <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-4">
+                  <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
+                    <input
+                      type="text"
+                      placeholder="Nome nuovo Tour (es. IVAO World Tour 2026)"
+                      value={newTourName}
+                      onChange={(e) => setNewTourName(e.target.value)}
+                      className="flex-1 min-w-[220px] bg-slate-900 border border-slate-700 px-3 py-2 rounded-lg text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Descrizione opzionale (es. Giro del mondo in SF50)"
+                      value={newTourDesc}
+                      onChange={(e) => setNewTourDesc(e.target.value)}
+                      className="flex-1 min-w-[220px] bg-slate-900 border border-slate-700 px-3 py-2 rounded-lg text-slate-200 focus:outline-none focus:border-amber-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleCreateTour()}
+                      className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold transition flex items-center gap-1.5"
+                    >
+                      <Plus size={14} /> Crea Tour
+                    </button>
+                  </div>
+
+                  {toursList.length > 0 && (
+                    <div className="flex flex-wrap gap-2 font-mono text-xs pt-2 border-t border-slate-800">
+                      {toursList.map((tr) => {
+                        const active = selectedTourId === tr.id;
+                        return (
+                          <button
+                            key={tr.id}
+                            onClick={() => {
+                              setSelectedTourId(tr.id);
+                              fetchTourDetail(tr.id);
+                            }}
+                            className={`px-3 py-1.5 rounded-lg border transition flex items-center gap-2 ${
+                              active
+                                ? 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold'
+                                : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                            }`}
+                          >
+                            <span>🗺️ {tr.name}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300">
+                              {tr.legs_count} tappe
+                            </span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                              tr.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-cyan-500/15 text-cyan-300'
+                            }`}>
+                              {tr.status}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {selectedTourDetail ? (() => {
+                  const legs = selectedTourDetail.legs || [];
+                  const stats = selectedTourDetail.stats || {};
+                  const tourObj = selectedTourDetail.tour;
+
+                  // Compute bounding box for automatic zoom on SVG map (equirectangular 1000x480)
+                  const projX = (lon) => ((lon + 180) / 360) * 1000;
+                  const projY = (lat) => ((90 - lat) / 180) * 480;
+                  let minX = 0, maxX = 1000, minY = 0, maxY = 480;
+                  if (legs.length > 0) {
+                    const xs = legs.flatMap(l => [projX(l.origin_lon), projX(l.destination_lon)]);
+                    const ys = legs.flatMap(l => [projY(l.origin_lat), projY(l.destination_lat)]);
+                    const rawMinX = Math.min(...xs), rawMaxX = Math.max(...xs);
+                    const rawMinY = Math.min(...ys), rawMaxY = Math.max(...ys);
+                    const padX = Math.max(45, (rawMaxX - rawMinX) * 0.22);
+                    const padY = Math.max(30, (rawMaxY - rawMinY) * 0.25);
+                    minX = Math.max(0, rawMinX - padX);
+                    maxX = Math.min(1000, rawMaxX + padX);
+                    minY = Math.max(0, rawMinY - padY);
+                    maxY = Math.min(480, rawMaxY + padY);
+                    if ((maxX - minX) / (maxY - minY) < 1.8) {
+                      const cx = (minX + maxX) / 2;
+                      const targetW = Math.min(1000, (maxY - minY) * 2.08);
+                      minX = Math.max(0, cx - targetW / 2);
+                      maxX = Math.min(1000, cx + targetW / 2);
+                    }
+                  }
+                  const vbW = Math.max(80, maxX - minX);
+                  const vbH = Math.max(40, maxY - minY);
+                  const scaleF = vbW / 1000;
+
+                  // Unique waypoints for markers
+                  const wpMap = new Map();
+                  legs.forEach((lg) => {
+                    if (!wpMap.has(lg.origin_icao)) {
+                      wpMap.set(lg.origin_icao, { icao: lg.origin_icao, name: lg.origin_name, x: projX(lg.origin_lon), y: projY(lg.origin_lat), idx: lg.leg_number });
+                    }
+                    wpMap.set(lg.destination_icao, { icao: lg.destination_icao, name: lg.destination_name, x: projX(lg.destination_lon), y: projY(lg.destination_lat), idx: lg.leg_number + 1 });
+                  });
+                  const waypoints = Array.from(wpMap.values());
+
+                  return (
+                    <div className="space-y-5">
+                      {/* Tour Header & KPIs */}
+                      <div className="glass-panel p-5 rounded-xl border border-amber-500/30 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                              🗺️ {tourObj.name}
+                              <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                                tourObj.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-cyan-500/20 text-cyan-300'
+                              }`}>
+                                {tourObj.status}
+                              </span>
+                            </h3>
+                            {tourObj.description && (
+                              <p className="text-xs text-slate-400 mt-0.5">{tourObj.description}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 font-mono text-xs">
+                            <button
+                              onClick={() => handleToggleTourStatus(tourObj)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 transition"
+                            >
+                              {tourObj.status === 'ACTIVE' ? '✓ Segna Completato' : '↺ Riapri Tour'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTour(tourObj.id)}
+                              className="px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-500/30 transition"
+                            >
+                              Elimina Tour
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 font-mono text-xs">
+                          <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                            <div className="text-slate-400">Tappe Volate</div>
+                            <div className="text-lg font-bold text-white">{stats.legs_count || 0}</div>
+                          </div>
+                          <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                            <div className="text-slate-400">Distanza Totale</div>
+                            <div className="text-lg font-bold text-cyan-300">{stats.total_nm || 0} NM</div>
+                          </div>
+                          <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                            <div className="text-slate-400">Ore di Volo</div>
+                            <div className="text-lg font-bold text-white">{stats.total_hours || 0} h</div>
+                          </div>
+                          <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                            <div className="text-slate-400">Fuel Bruciato</div>
+                            <div className="text-lg font-bold text-purple-300">{stats.total_fuel_kg || 0} kg</div>
+                          </div>
+                          <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                            <div className="text-slate-400">Media Touchdown</div>
+                            <div className="text-lg font-bold text-amber-300">{stats.avg_touchdown_fpm ? `-${stats.avg_touchdown_fpm} fpm` : 'N/D'}</div>
+                          </div>
+                          <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+                            <div className="text-slate-400">Bilancio Tour</div>
+                            <div className={`text-lg font-bold ${(stats.total_net_profit_eur || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {formatEuro(stats.total_net_profit_eur || 0)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Interactive SVG Route Map */}
+                      <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center font-mono text-xs text-slate-400">
+                          <span className="font-bold text-cyan-300">🛰️ Mappa Tracciato Tappe</span>
+                          <span>{legs.length > 0 ? `${legs[0].origin_icao} ➔ ... ➔ ${legs[legs.length - 1].destination_icao}` : 'Nessuna tappa ancora completata'}</span>
+                        </div>
+                        <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
+                          <svg viewBox={`${minX} ${minY} ${vbW} ${vbH}`} className="w-full h-72 select-none">
+                            {/* Lat/Lon Graticule */}
+                            {[-60, -30, 0, 30, 60].map((lat) => (
+                              <line key={`lat-${lat}`} x1={0} y1={projY(lat)} x2={1000} y2={projY(lat)} stroke="#1e293b" strokeWidth={0.7 * scaleF} strokeDasharray={`${3 * scaleF},${3 * scaleF}`} />
+                            ))}
+                            {[-150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150].map((lon) => (
+                              <line key={`lon-${lon}`} x1={projX(lon)} y1={0} x2={projX(lon)} y2={480} stroke="#1e293b" strokeWidth={0.7 * scaleF} strokeDasharray={`${3 * scaleF},${3 * scaleF}`} />
+                            ))}
+                            {/* Flight Route Legs */}
+                            {legs.map((lg) => {
+                              const x1 = projX(lg.origin_lon), y1 = projY(lg.origin_lat);
+                              const x2 = projX(lg.destination_lon), y2 = projY(lg.destination_lat);
+                              return (
+                                <g key={lg.flight_log_id}>
+                                  <line
+                                    x1={x1} y1={y1} x2={x2} y2={y2}
+                                    stroke="#38bdf8"
+                                    strokeWidth={2.4 * scaleF}
+                                    strokeLinecap="round"
+                                    opacity="0.88"
+                                  />
+                                </g>
+                              );
+                            })}
+                            {/* Waypoints */}
+                            {waypoints.map((wp, i) => (
+                              <g key={`${wp.icao}-${i}`}>
+                                <circle
+                                  cx={wp.x}
+                                  cy={wp.y}
+                                  r={4.5 * scaleF}
+                                  fill={i === waypoints.length - 1 ? '#10b981' : '#f59e0b'}
+                                  stroke="#0f172a"
+                                  strokeWidth={1.5 * scaleF}
+                                />
+                                <text
+                                  x={wp.x + 6 * scaleF}
+                                  y={wp.y - 4 * scaleF}
+                                  fill="#e2e8f0"
+                                  fontSize={10 * scaleF}
+                                  fontFamily="monospace"
+                                  fontWeight="bold"
+                                >
+                                  {wp.icao}
+                                </text>
+                              </g>
+                            ))}
+                          </svg>
+                        </div>
+                      </div>
+
+                      {/* Chronological Legs Table */}
+                      <div className="glass-panel rounded-xl border border-slate-800 overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left font-mono text-xs">
+                            <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
+                              <tr>
+                                <th className="p-3">Tappa</th>
+                                <th className="p-3">Volo</th>
+                                <th className="p-3">Tratta</th>
+                                <th className="p-3">Distanza</th>
+                                <th className="p-3">Durata</th>
+                                <th className="p-3">Touchdown</th>
+                                <th className="p-3 text-right">Netto (€)</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                              {legs.map((lg) => (
+                                <tr key={lg.flight_log_id} className="hover:bg-slate-800/30">
+                                  <td className="p-3 font-bold text-amber-300">#{lg.leg_number}</td>
+                                  <td className="p-3 text-cyan-400 font-bold">{lg.flight_number}</td>
+                                  <td className="p-3 font-bold">
+                                    {lg.origin_icao} ➔ {lg.destination_icao}
+                                    <span className="text-[10px] text-slate-400 block font-sans">
+                                      {lg.origin_name} ➔ {lg.destination_name}
+                                    </span>
+                                  </td>
+                                  <td className="p-3">{lg.distance_nm} NM</td>
+                                  <td className="p-3">{lg.duration_min} min</td>
+                                  <td className="p-3">
+                                    {lg.touchdown_fpm !== null ? `${lg.touchdown_fpm} fpm (${lg.touchdown_rating})` : 'N/D'}
+                                  </td>
+                                  <td className={`p-3 text-right font-bold ${lg.net_profit_eur >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {formatEuro(lg.net_profit_eur)}
+                                  </td>
+                                </tr>
+                              ))}
+                              {legs.length === 0 && (
+                                <tr>
+                                  <td colSpan={7} className="p-6 text-center text-slate-500">
+                                    Nessuna tappa completata in questo Tour. Seleziona "{tourObj.name}" in Pianifica Volo o in Plancia HUD per registrare le prossime tratte!
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className="glass-panel p-10 rounded-xl border border-dashed border-slate-800 text-center text-slate-400 font-mono text-sm">
+                    Crea il tuo primo Tour (es. "IVAO World Tour") qui sopra per tracciare tappe, mappa rotta e statistiche cumulative.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

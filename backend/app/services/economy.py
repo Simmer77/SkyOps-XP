@@ -1,10 +1,11 @@
 import logging
+import math
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
-from app.models.schema import Company, Aircraft, FlightLog, MaintenanceEvent, FinancialTransaction
+from app.models.schema import Company, Aircraft, FlightLog, MaintenanceEvent, FinancialTransaction, CrewMember
 
 logger = logging.getLogger("SkyOps.Economy")
 
@@ -30,7 +31,11 @@ CATEGORY_SPECS = {
         "pilots_count": 1,
         "attendants_count": 0,
         "crew_hourly_rate_eur": 90.0,
+        "crew_monthly_salary_eur": 1800.0,
         "crew_label": "1 Pilota",
+        "handling_per_pax_eur": 15.0,
+        "hard_landing_penalty_eur": 150.0,
+        "structural_penalty_eur": 450.0,
     },
     "BIZJET": {
         "label": "Business Jet (Phenom 300, Eclipse 550, Citation)",
@@ -43,7 +48,11 @@ CATEGORY_SPECS = {
         "pilots_count": 2,
         "attendants_count": 1,
         "crew_hourly_rate_eur": 240.0,
+        "crew_monthly_salary_eur": 4800.0,
         "crew_label": "2 Piloti + 1 Assistente di Volo",
+        "handling_per_pax_eur": 45.0,
+        "hard_landing_penalty_eur": 450.0,
+        "structural_penalty_eur": 1500.0,
     },
     "AIRLINER": {
         "label": "Airliner di Linea (Boeing 737, Airbus A320)",
@@ -56,7 +65,11 @@ CATEGORY_SPECS = {
         "pilots_count": 2,
         "attendants_count": 4,
         "crew_hourly_rate_eur": 520.0,
+        "crew_monthly_salary_eur": 10400.0,
         "crew_label": "2 Piloti + 4 Assistenti di Volo",
+        "handling_per_pax_eur": 18.0,
+        "hard_landing_penalty_eur": 1200.0,
+        "structural_penalty_eur": 4500.0,
     }
 }
 
@@ -70,18 +83,31 @@ class EconomyService:
         is_leased: bool = False,
         lease_rate_hourly: float = 0.0,
         is_home_base: bool = False,
-        exclude_crew_cost: bool = False
+        exclude_crew_cost: bool = False,
+        mtow_kg: float = 0.0,
+        distance_nm: float = 0.0,
+        pax_count: int = 0,
+        is_ifr: bool = True,
+        has_salaried_crew: bool = False,
+        company_reputation: float = 100.0,
+        touchdown_rating: Optional[str] = None,
+        max_g: float = 1.0,
+        min_g: float = 1.0
     ) -> Dict[str, Any]:
         """
-        Calcola il bilancio finanziario completo del volo in Euro (€).
-        Il carburante NON viene addebitato al consumo ma solo al momento del rifornimento.
+        Calcola il bilancio finanziario completo del volo in Euro (€):
+        - Carburante: € 0 a fine volo (pagato al rifornimento)
+        - Tassa atterraggio (scontata a Base Operativa)
+        - Navigazione Eurocontrol & Handling/Catering Pax (esenti sui voli VFR)
+        - Equipaggio (Freelance orario vs Assunto Fisso € 0/volo vs Solo VFR € 0)
+        - Bonus Qualità / Reputazione & Penali Hard Landing / Over-G
         """
         specs = CATEGORY_SPECS.get(category, CATEGORY_SPECS["GA"])
         
-        # 1. Costo Carburante a fine volo: 0 € (viene addebitato solo quando rifornisci il serbatoio)
+        # 1. Costo Carburante a fine volo: 0 € (pagato alla pompa)
         fuel_cost = 0.0
         
-        # 2. Tassa d'atterraggio (Landing Fee): base + quota tonnellata MTOW con tariffa agevolata alla Base Operativa
+        # 2. Tassa d'atterraggio (Landing Fee) con sconto Base Operativa
         base_fee = specs["base_landing_fee_eur"] + (specs["avg_mtow_tonnes"] * specs["fee_per_tonne_eur"])
         if is_home_base:
             multiplier = 0.65 if is_leased else 0.30
@@ -90,27 +116,96 @@ class EconomyService:
             multiplier = 1.0
             discount_pct = 0
         landing_fee = round(base_fee * multiplier, 2)
+
+        # 3. Tariffe Rotta / Navigazione Eurocontrol (solo IFR e MTOW >= 2.0 t)
+        mtow_t = (mtow_kg / 1000.0) if (mtow_kg and mtow_kg > 0) else specs["avg_mtow_tonnes"]
+        nav_fee = 0.0
+        if is_ifr and distance_nm > 0 and mtow_t >= 2.0:
+            dist_km = distance_nm * 1.852
+            nav_fee = round(math.sqrt(mtow_t / 50.0) * (dist_km / 100.0) * 65.0, 2)
+
+        # 4. Catering & Handling Passeggeri (solo commerciale IFR con passeggeri a bordo)
+        handling_fee = 0.0
+        if is_ifr and job_reward > 0 and pax_count > 0:
+            handling_fee = round(pax_count * specs.get("handling_per_pax_eur", 15.0), 2)
         
-        # 3. Costo Noleggio se aereo noleggiato (Block hours * tariffa)
+        # 5. Costo Noleggio se aereo noleggiato
         lease_cost = round(flight_hours * lease_rate_hourly, 2) if is_leased else 0.0
 
-        # 4. Costo Equipaggio (Piloti + Assistenti di Volo in base alla classe velivolo, escludibile per VFR / Solo)
+        # 6. Costo Equipaggio (Solo VFR -> 0, Assunto Fisso -> 0 orario, altrimenti Freelance)
         crew_hourly = specs.get("crew_hourly_rate_eur", 90.0)
-        crew_cost = 0.0 if exclude_crew_cost else round(flight_hours * crew_hourly, 2)
+        if exclude_crew_cost:
+            crew_cost = 0.0
+            crew_source = "SOLO_VFR"
+        elif has_salaried_crew:
+            crew_cost = 0.0
+            crew_source = "SALARIED"
+        else:
+            crew_cost = round(flight_hours * crew_hourly, 2)
+            crew_source = "FREELANCE"
+
+        # 7. Sistema Reputazione & Bonus Qualità / Penali Atterraggio
+        rep = max(0.0, min(100.0, company_reputation if company_reputation is not None else 100.0))
+        rep_bonus_pct = 0.0
+        if job_reward > 0:
+            if rep >= 95.0:
+                rep_bonus_pct = 10.0
+            elif rep >= 85.0:
+                rep_bonus_pct = 5.0
+            elif rep < 50.0:
+                rep_bonus_pct = -20.0
+            elif rep < 70.0:
+                rep_bonus_pct = -10.0
+            if touchdown_rating == "BUTTER":
+                rep_bonus_pct += 5.0
+
+        reputation_bonus_eur = round(job_reward * (rep_bonus_pct / 100.0), 2) if job_reward > 0 else 0.0
+        adjusted_gross_revenue = round(max(0.0, job_reward + reputation_bonus_eur), 2)
+
+        reputation_delta = 0.0
+        penalty_eur = 0.0
+        if touchdown_rating == "BUTTER":
+            reputation_delta += 1.5
+        elif touchdown_rating == "GOOD":
+            reputation_delta += 0.5
+        elif touchdown_rating == "HARD":
+            reputation_delta -= 3.0
+            base_pen = specs.get("hard_landing_penalty_eur", 150.0)
+            penalty_eur = round(base_pen if pax_count > 0 else base_pen * 0.5, 2)
+        elif touchdown_rating == "STRUCTURAL_DAMAGE":
+            reputation_delta -= 8.0
+            penalty_eur = round(specs.get("structural_penalty_eur", 450.0), 2)
+
+        if max_g > 2.8 or min_g < 0.0:
+            reputation_delta -= 2.0
+
+        reputation_delta = round(reputation_delta, 1)
+        new_reputation = round(max(0.0, min(100.0, rep + reputation_delta)), 1)
         
-        # 5. Spese totali e utile netto (al netto dei rifornimenti già pagati alla pompa)
-        total_expenses = round(fuel_cost + landing_fee + lease_cost + crew_cost, 2)
-        net_profit = round(job_reward - total_expenses, 2)
+        # 8. Spese totali e utile netto
+        total_expenses = round(fuel_cost + landing_fee + nav_fee + handling_fee + lease_cost + crew_cost + penalty_eur, 2)
+        net_profit = round(adjusted_gross_revenue - total_expenses, 2)
         
         return {
-            "gross_revenue": round(job_reward, 2),
+            "base_reward": round(job_reward, 2),
+            "reputation_bonus_eur": reputation_bonus_eur,
+            "reputation_bonus_pct": rep_bonus_pct,
+            "gross_revenue": adjusted_gross_revenue,
             "fuel_cost": fuel_cost,
             "landing_fee": landing_fee,
+            "nav_fee": nav_fee,
+            "handling_fee": handling_fee,
             "lease_cost": lease_cost,
             "crew_cost": crew_cost,
+            "crew_source": crew_source,
             "crew_excluded": exclude_crew_cost,
+            "has_salaried_crew": has_salaried_crew,
             "crew_label": specs.get("crew_label", "1 Pilota"),
             "crew_hourly_rate_eur": crew_hourly,
+            "penalty_eur": penalty_eur,
+            "reputation_delta": reputation_delta,
+            "new_reputation": new_reputation,
+            "flight_rules": "IFR" if is_ifr else "VFR",
             "total_expenses": total_expenses,
             "net_profit": net_profit,
             "is_home_base": is_home_base,
@@ -214,11 +309,14 @@ class EconomyService:
         """
         ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
         owned_aircraft = ac_res.scalars().all()
+        cm_res = await session.execute(select(CrewMember).where(CrewMember.is_active == True))
+        active_crew = cm_res.scalars().all()
         
         details = []
         total_hangar = 0.0
         total_insurance = 0.0
         total_financing = 0.0
+        total_salaries = round(sum(c.monthly_salary_eur or 0.0 for c in active_crew), 2)
         
         for ac in owned_aircraft:
             specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
@@ -247,10 +345,12 @@ class EconomyService:
         return {
             "period": "MONTHLY",
             "owned_aircraft_count": len(owned_aircraft),
+            "hired_crew_count": len(active_crew),
             "total_hangar_eur": round(total_hangar, 2),
             "total_insurance_eur": round(total_insurance, 2),
             "total_financing_eur": round(total_financing, 2),
-            "total_fixed_eur": round(total_hangar + total_insurance + total_financing, 2),
+            "total_crew_salaries_eur": total_salaries,
+            "total_fixed_eur": round(total_hangar + total_insurance + total_financing + total_salaries, 2),
             "aircraft_breakdown": details
         }
 
@@ -287,6 +387,8 @@ class EconomyService:
 
         ac_res = await session.execute(select(Aircraft).where(Aircraft.ownership == "OWNED"))
         owned_aircraft = ac_res.scalars().all()
+        cm_res = await session.execute(select(CrewMember).where(CrewMember.is_active == True))
+        active_crew = cm_res.scalars().all()
 
         total_deductions = 0.0
         closed_months_summary = []
@@ -294,6 +396,20 @@ class EconomyService:
         for m_ym in elapsed_months:
             m_label = EconomyService.format_operating_month_it(m_ym)
             month_total = 0.0
+            for cm in active_crew:
+                sal = round(cm.monthly_salary_eur or 0.0, 2)
+                if sal > 0:
+                    await EconomyService.record_transaction(
+                        session=session,
+                        category="CREW_SALARY",
+                        title=f"Stipendio Fisso {cm.name} ({cm.category} • {m_label})",
+                        amount_eur=-sal,
+                        description=f"Stipendio mensile equipaggio fisso ({cm.role_label}) — {m_label}",
+                        company=company,
+                        operating_month=m_ym
+                    )
+                    month_total += sal
+
             for ac in owned_aircraft:
                 specs = CATEGORY_SPECS.get(ac.category, CATEGORY_SPECS["GA"])
                 hangar_cost = round(specs["hangar_monthly_eur"], 2)
@@ -447,12 +563,16 @@ class EconomyService:
         revenue_flight = sum(t.amount_eur for t in transactions if t.category in ["REVENUE", "REVENUE_FLIGHT"] and t.amount_eur > 0)
         expense_fuel = abs(sum(t.amount_eur for t in transactions if t.category in ["FUEL", "EXPENSE_FUEL"]))
         expense_landing = abs(sum(t.amount_eur for t in transactions if t.category in ["LANDING_FEE", "EXPENSE_LANDING"]))
+        expense_nav = abs(sum(t.amount_eur for t in transactions if t.category in ["NAV_FEE"]))
+        expense_handling = abs(sum(t.amount_eur for t in transactions if t.category in ["HANDLING"]))
+        expense_penalty = abs(sum(t.amount_eur for t in transactions if t.category in ["PENALTY"]))
         expense_lease = abs(sum(t.amount_eur for t in transactions if t.category in ["LEASE", "EXPENSE_LEASE"]))
         expense_crew = abs(sum(t.amount_eur for t in transactions if t.category in ["CREW", "EXPENSE_CREW"]))
         expense_maint = abs(sum(t.amount_eur for t in transactions if t.category in ["MAINTENANCE", "EXPENSE_MAINTENANCE"]))
         expense_hangar = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_HANGAR"]))
         expense_insurance = abs(sum(t.amount_eur for t in transactions if t.category in ["FIXED_INSURANCE"]))
         expense_financing = abs(sum(t.amount_eur for t in transactions if t.category in ["FINANCING"]))
+        expense_crew_salary = abs(sum(t.amount_eur for t in transactions if t.category in ["CREW_SALARY"]))
         
         # Fallback only if database has literally zero FinancialTransactions
         if not all_transactions:
@@ -461,6 +581,9 @@ class EconomyService:
             revenue_flight = sum(f.revenue_usd or 0.0 for f in flights)
             expense_fuel = sum(f.fuel_cost_usd or 0.0 for f in flights)
             expense_landing = sum(f.landing_fee_usd or 0.0 for f in flights)
+            expense_nav = sum(getattr(f, "nav_fee_eur", 0.0) or 0.0 for f in flights)
+            expense_handling = sum(getattr(f, "handling_fee_eur", 0.0) or 0.0 for f in flights)
+            expense_penalty = sum(getattr(f, "penalty_eur", 0.0) or 0.0 for f in flights)
             expense_lease = sum(f.lease_cost_usd or 0.0 for f in flights)
             expense_crew = sum(f.crew_cost_usd or 0.0 for f in flights)
             
@@ -468,8 +591,8 @@ class EconomyService:
             events = mv_res.scalars().all()
             expense_maint = sum(m.cost_usd or 0.0 for m in events)
             
-        direct_operating_costs = round(expense_fuel + expense_landing + expense_lease + expense_crew, 2)
-        fixed_overheads = round(expense_hangar + expense_insurance + expense_financing, 2)
+        direct_operating_costs = round(expense_fuel + expense_landing + expense_nav + expense_handling + expense_penalty + expense_lease + expense_crew, 2)
+        fixed_overheads = round(expense_hangar + expense_insurance + expense_financing + expense_crew_salary, 2)
         total_expenses = round(direct_operating_costs + expense_maint + fixed_overheads, 2)
         net_profit = round(revenue_flight - total_expenses, 2)
         margin_pct = round((net_profit / revenue_flight * 100.0), 1) if revenue_flight > 0 else 0.0
@@ -483,6 +606,7 @@ class EconomyService:
             "operating_month_label": EconomyService.format_operating_month_it(op_month),
             "selected_period": selected_period,
             "available_months": available_months,
+            "reputation": company.reputation if company.reputation is not None else 100.0,
             "virtual_date": (company.virtual_date or datetime.now(timezone.utc)).isoformat(),
             
             # Stato Patrimoniale (Balance Sheet)
@@ -501,6 +625,9 @@ class EconomyService:
                     "total_eur": direct_operating_costs,
                     "fuel_eur": round(expense_fuel, 2),
                     "landing_fees_eur": round(expense_landing, 2),
+                    "nav_fees_eur": round(expense_nav, 2),
+                    "handling_fees_eur": round(expense_handling, 2),
+                    "penalties_eur": round(expense_penalty, 2),
                     "aircraft_leases_eur": round(expense_lease, 2),
                     "crew_eur": round(expense_crew, 2)
                 },
@@ -511,7 +638,8 @@ class EconomyService:
                     "total_eur": fixed_overheads,
                     "hangar_eur": round(expense_hangar, 2),
                     "insurance_eur": round(expense_insurance, 2),
-                    "financing_eur": round(expense_financing, 2)
+                    "financing_eur": round(expense_financing, 2),
+                    "crew_salaries_eur": round(expense_crew_salary, 2)
                 },
                 "total_expenses_eur": total_expenses,
                 "net_profit_eur": net_profit,
@@ -577,13 +705,21 @@ class EconomyService:
                 ]
             },
             "crew_rules": {
-                "formula": "Costo Equipaggio = Ore di Volo (Block Time) × Tariffa Oraria Equipaggio (escludibile su voli solo VFR)",
-                "notes": "Puoi disattivare l'addebito dell'equipaggio prima della partenza o in plancia se voli in solitario (Owner-Pilot / VFR senza assistenti).",
+                "formula": "Freelance a Volo (Ore × Tariffa) OPPURE Equipaggio Assunto Fisso (€/mese = € 0 a volo) OPPURE Volo Solo VFR (€ 0)",
+                "notes": "Se assumi un equipaggio fisso per la categoria, paghi uno stipendio mensile fisso e tutti i voli del mese sono a € 0/ora! Break-even: 20 ore di volo/mese.",
                 "categories": [
-                    {"category": "General Aviation (GA)", "crew": "1 Pilota", "rate": "€ 90.00 / ora"},
-                    {"category": "Business Jet (BIZJET)", "crew": "2 Piloti + 1 Assistente di Volo", "rate": "€ 240.00 / ora"},
-                    {"category": "Airliner (AIRLINER)", "crew": "2 Piloti + 4 Assistenti di Volo", "rate": "€ 520.00 / ora"}
+                    {"category": "General Aviation (GA)", "crew": "1 Pilota", "rate": "€ 90/h Freelance • € 1.800/mese Fisso"},
+                    {"category": "Business Jet (BIZJET)", "crew": "2 Piloti + 1 A/V", "rate": "€ 240/h Freelance • € 4.800/mese Fisso"},
+                    {"category": "Airliner (AIRLINER)", "crew": "2 Piloti + 4 A/V", "rate": "€ 520/h Freelance • € 10.400/mese Fisso"}
                 ]
+            },
+            "eurocontrol_and_handling_rules": {
+                "formula": "Tassa Sorvolo Eurocontrol = √(MTOW_t / 50) × (Distanza_km / 100) × 65 € | Handling Pax = Pax × Tariffa (€15 GA / €45 Biz / €18 Airliner)",
+                "notes": "Applicato ai voli IFR commerciali (aeromobili >= 2.0 t). I voli in regole VFR sono esentati da tasse di rotta Eurocontrol e Catering/Handling passeggeri."
+            },
+            "reputation_rules": {
+                "formula": "Reputazione (0–100%) modifica i ricavi charter (+10% se >=95%, +5% extra per Butter Landing) e genera penali per atterraggi duri",
+                "notes": "Butter (+1.5%), Good (+0.5%), Hard (-3.0% + risarcimento pax/controllo), Danno Strutturale (-8.0% + penale assicurativa), Over-G (-2.0%)."
             },
             "fixed_costs_rules": {
                 "formula": "Costi Fissi Mensili = Hangar + Assicurazione + Eventuale Rata Finanziamento (addebitati automaticamente a ogni cambio mese reale)",

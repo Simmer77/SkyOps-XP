@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.models.schema import Aircraft, Job, FlightLog, Company
+from app.models.schema import Aircraft, Job, FlightLog, Company, CrewMember
 from app.services.flight_tracker import flight_tracker
 from app.services.xp_connector import xp_connector
 from app.services.dealerships import DealershipService
@@ -20,11 +20,15 @@ class StartFlightRequest(BaseModel):
     aircraft_id: int
     job_id: Optional[int] = None
     exclude_crew_cost: Optional[bool] = None
+    flight_rules: Optional[str] = None
+    tour_id: Optional[int] = None
 
 class FinalizeFlightRequest(BaseModel):
     actual_arrival_icao: Optional[str] = None
     diversion_reason: Optional[str] = None
     exclude_crew_cost: Optional[bool] = None
+    flight_rules: Optional[str] = None
+    tour_id: Optional[int] = None
 
 async def _resolve_active_job(db: AsyncSession, aircraft_id: Optional[int]) -> Optional[Job]:
     if flight_tracker.active_job_id:
@@ -75,10 +79,23 @@ async def get_active_flight(
 
     cat_key = (aircraft.category if aircraft else "GA") or "GA"
     cat_specs = CATEGORY_SPECS.get(cat_key, CATEGORY_SPECS["GA"])
+    salaried_crew = (
+        await db.execute(select(CrewMember).where(CrewMember.category == cat_key, CrewMember.is_active == True))
+    ).scalars().first()
     effective_exclude_crew = (
         flight_tracker.exclude_crew_cost
         if flight_tracker.active_aircraft_id is not None
         else bool(job.exclude_crew_cost if job else False)
+    )
+    effective_rules = (
+        flight_tracker.flight_rules
+        if flight_tracker.active_aircraft_id is not None
+        else (getattr(job, "flight_rules", None) or "IFR")
+    )
+    effective_tour_id = (
+        flight_tracker.tour_id
+        if flight_tracker.active_aircraft_id is not None
+        else getattr(job, "tour_id", None)
     )
 
     return {
@@ -87,9 +104,14 @@ async def get_active_flight(
         "aircraft": aircraft,
         "job": job,
         "exclude_crew_cost": effective_exclude_crew,
+        "flight_rules": effective_rules,
+        "tour_id": effective_tour_id,
+        "has_salaried_crew": salaried_crew is not None,
+        "salaried_crew_name": salaried_crew.name if salaried_crew else None,
         "crew_spec": {
             "label": cat_specs.get("crew_label", "1 Pilota"),
             "hourly_rate_eur": cat_specs.get("crew_hourly_rate_eur", 90.0),
+            "monthly_salary_eur": cat_specs.get("crew_monthly_salary_eur", 1800.0),
             "pilots_count": cat_specs.get("pilots_count", 1),
             "attendants_count": cat_specs.get("attendants_count", 0),
         },
@@ -204,11 +226,29 @@ async def start_flight(req: StartFlightRequest, db: AsyncSession = Depends(get_d
         if req.exclude_crew_cost is not None
         else bool(job.exclude_crew_cost if job else False)
     )
-    if job and req.exclude_crew_cost is not None:
-        job.exclude_crew_cost = exclude_crew
+    eff_rules = (
+        req.flight_rules.strip().upper()
+        if (req.flight_rules and req.flight_rules.strip())
+        else ((getattr(job, "flight_rules", None) if job else None) or "IFR")
+    ).upper()
+    eff_tour_id = req.tour_id if req.tour_id is not None else (getattr(job, "tour_id", None) if job else None)
+
+    if job:
+        if req.exclude_crew_cost is not None:
+            job.exclude_crew_cost = exclude_crew
+        if req.flight_rules:
+            job.flight_rules = eff_rules
+        if req.tour_id is not None:
+            job.tour_id = eff_tour_id
     await db.commit()
     
-    flight_tracker.start_flight(aircraft.id, job.id if job else None, exclude_crew_cost=exclude_crew)
+    flight_tracker.start_flight(
+        aircraft.id,
+        job.id if job else None,
+        exclude_crew_cost=exclude_crew,
+        flight_rules=eff_rules,
+        tour_id=eff_tour_id
+    )
     
     # Se X-Plane riportava serbatoio vuoto (0 kg), ripristina quello salvato in SkyOps
     if xp_fuel <= 0.5 and aircraft.fuel_quantity_kg > 0:
@@ -272,7 +312,9 @@ async def finalize_flight(
     summary = await flight_tracker.finalize_flight(
         actual_arrival_icao=actual_arr,
         diversion_reason=(req.diversion_reason if req else None),
-        exclude_crew_cost=(req.exclude_crew_cost if req else None)
+        exclude_crew_cost=(req.exclude_crew_cost if req else None),
+        flight_rules=(req.flight_rules if req else None),
+        tour_id=(req.tour_id if req else None)
     )
     if not summary:
         raise HTTPException(status_code=500, detail="Errore durante la chiusura del volo.")

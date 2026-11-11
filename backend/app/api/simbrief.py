@@ -16,6 +16,8 @@ class ImportOFPRequest(BaseModel):
     aircraft_id: int
     is_commercial: bool = True
     exclude_crew_cost: bool = False
+    flight_rules: str = "IFR"
+    tour_id: Optional[int] = None
 
 def calculate_simbrief_reward(dist_nm: float, pax_count: int, cargo_kg: float, category: str = "GA") -> float:
     rates = {"GA": 18.0, "BIZJET": 26.0, "AIRLINER": 38.0}
@@ -112,6 +114,8 @@ async def import_simbrief_flight(req: ImportOFPRequest, db: AsyncSession = Depen
         penalty_usd=round(reward * 0.15, 0) if reward > 0 else 0.0,
         status="ACCEPTED",
         exclude_crew_cost=req.exclude_crew_cost,
+        flight_rules=(req.flight_rules or "IFR").strip().upper(),
+        tour_id=req.tour_id,
         aircraft_id=aircraft.id
     )
     db.add(job)

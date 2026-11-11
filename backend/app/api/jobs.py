@@ -32,6 +32,8 @@ class ManualFlightPlanRequest(BaseModel):
     route: Optional[str] = ""
     is_commercial: bool = True
     exclude_crew_cost: bool = False
+    flight_rules: str = "IFR"
+    tour_id: Optional[int] = None
 
 @router.get("/estimate_route")
 async def estimate_manual_route(
@@ -109,6 +111,8 @@ async def create_manual_flight_plan(req: ManualFlightPlanRequest, db: AsyncSessi
         penalty_usd=round(reward * 0.15, 0) if reward > 0 else 0.0,
         status="ACCEPTED",
         exclude_crew_cost=req.exclude_crew_cost,
+        flight_rules=(req.flight_rules or "IFR").strip().upper(),
+        tour_id=req.tour_id,
         aircraft_id=aircraft.id
     )
     db.add(job)

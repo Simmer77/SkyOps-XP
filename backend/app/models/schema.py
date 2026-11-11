@@ -100,6 +100,8 @@ class Job(Base):
     penalty_usd = Column(Float, default=0.0)
     status = Column(String, default="AVAILABLE") # "AVAILABLE", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "FAILED"
     exclude_crew_cost = Column(Boolean, default=False)
+    flight_rules = Column(String, default="IFR") # "IFR" | "VFR"
+    tour_id = Column(Integer, ForeignKey("tours.id"), nullable=True)
     
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(DateTime, nullable=True)
@@ -137,6 +139,14 @@ class FlightLog(Base):
     landing_fee_usd = Column(Float, default=0.0)
     lease_cost_usd = Column(Float, default=0.0)
     crew_cost_usd = Column(Float, default=0.0)
+    nav_fee_eur = Column(Float, default=0.0)
+    handling_fee_eur = Column(Float, default=0.0)
+    reputation_delta = Column(Float, default=0.0)
+    reputation_bonus_eur = Column(Float, default=0.0)
+    penalty_eur = Column(Float, default=0.0)
+    flight_rules = Column(String, default="IFR")
+    pax_count = Column(Integer, default=0)
+    tour_id = Column(Integer, ForeignKey("tours.id"), nullable=True)
     maintenance_cost_usd = Column(Float, default=0.0)
     net_profit_usd = Column(Float, default=0.0)
     
@@ -202,3 +212,23 @@ class MarketAircraft(Base):
     image_url = Column(String, nullable=True, default="")
     default_tail = Column(String, default="I-SKYO")
     description = Column(Text, nullable=True)
+
+class CrewMember(Base):
+    __tablename__ = "crew_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, default="Equipaggio Linea")
+    category = Column(String, index=True) # "GA", "BIZJET", "AIRLINER"
+    role_label = Column(String, default="1 Pilota")
+    monthly_salary_eur = Column(Float, default=1800.0)
+    is_active = Column(Boolean, default=True)
+    hired_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+class Tour(Base):
+    __tablename__ = "tours"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(Text, nullable=True, default="")
+    status = Column(String, default="ACTIVE") # "ACTIVE", "COMPLETED"
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

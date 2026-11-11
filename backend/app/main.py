@@ -11,7 +11,7 @@ from app.models.schema import Company, Aircraft
 from app.services.xp_connector import xp_connector
 from app.services.flight_tracker import flight_tracker
 from app.services.maintenance import MaintenanceService
-from app.api import fleet, jobs, simbrief, flights, system, finances, company
+from app.api import fleet, jobs, simbrief, flights, system, finances, company, crew, tours
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("SkyOps.Main")
@@ -225,6 +225,8 @@ app.include_router(flights.router, prefix="/api")
 app.include_router(finances.router, prefix="/api")
 app.include_router(company.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
+app.include_router(crew.router, prefix="/api")
+app.include_router(tours.router, prefix="/api")
 
 # Serve static uploaded images
 from fastapi.staticfiles import StaticFiles

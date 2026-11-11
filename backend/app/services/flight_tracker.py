@@ -4,10 +4,11 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, Callable
 from sqlalchemy.future import select
 from app.core.database import AsyncSessionLocal
-from app.models.schema import Aircraft, Job, FlightLog, Company
+from app.models.schema import Aircraft, Job, FlightLog, Company, CrewMember
 from app.services.xp_connector import xp_connector
 from app.services.maintenance import MaintenanceService
 from app.services.economy import EconomyService
+from app.services.dealerships import DealershipService
 
 logger = logging.getLogger("SkyOps.Tracker")
 
@@ -31,11 +32,20 @@ class FlightTracker:
         self.touchdown_rating: Optional[str] = None
         self.was_in_air: bool = False
         self.exclude_crew_cost: bool = False
+        self.flight_rules: str = "IFR"
+        self.tour_id: Optional[int] = None
         
         self.loop_task: Optional[asyncio.Task] = None
         self.last_failure_check = 0.0
 
-    def start_flight(self, aircraft_id: int, job_id: Optional[int] = None, exclude_crew_cost: bool = False):
+    def start_flight(
+        self,
+        aircraft_id: int,
+        job_id: Optional[int] = None,
+        exclude_crew_cost: bool = False,
+        flight_rules: str = "IFR",
+        tour_id: Optional[int] = None
+    ):
         """Initializes a new tracked flight session"""
         self.active_aircraft_id = aircraft_id
         self.active_job_id = job_id
@@ -48,6 +58,8 @@ class FlightTracker:
         self.touchdown_rating = None
         self.was_in_air = False
         self.exclude_crew_cost = bool(exclude_crew_cost)
+        self.flight_rules = (flight_rules or "IFR").strip().upper()
+        self.tour_id = tour_id
         
         t = xp_connector.telemetry
         self.start_fuel_kg = t.get("fuel_total_kg", 0.0)
@@ -122,7 +134,9 @@ class FlightTracker:
         self,
         actual_arrival_icao: Optional[str] = None,
         diversion_reason: Optional[str] = None,
-        exclude_crew_cost: Optional[bool] = None
+        exclude_crew_cost: Optional[bool] = None,
+        flight_rules: Optional[str] = None,
+        tour_id: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Finalizes active flight, saves records to DB, applies wear & finances.
@@ -162,7 +176,30 @@ class FlightTracker:
             
             is_home_base = bool(company.home_base_icao and final_dest.upper() == company.home_base_icao.upper())
 
-            # 2. Financial calculation
+            # Distance & Rules & Tour & Salaried Crew Resolution
+            xp_path = company.xp12_install_path if company else None
+            dist_nm = (job.distance_nm if (job and job.distance_nm and job.distance_nm > 0) else None)
+            if not dist_nm and orig_icao and final_dest and orig_icao != final_dest:
+                dist_nm = DealershipService.distance_between_icaos_nm(orig_icao, final_dest, xp_path)
+            dist_nm = dist_nm or 0.0
+
+            pax_count = int(job.pax_count or 0) if job else 0
+            eff_rules = (
+                flight_rules.strip().upper()
+                if (flight_rules and flight_rules.strip())
+                else ((getattr(job, "flight_rules", None) if job else None) or self.flight_rules or "IFR")
+            ).upper()
+            is_ifr = (eff_rules != "VFR")
+            eff_tour_id = tour_id if tour_id is not None else (self.tour_id if self.tour_id is not None else (getattr(job, "tour_id", None) if job else None))
+
+            salaried_crew = (
+                await session.execute(
+                    select(CrewMember).where(CrewMember.category == aircraft.category, CrewMember.is_active == True)
+                )
+            ).scalars().first()
+            has_salaried_crew = salaried_crew is not None
+
+            # 2. Financial calculation (incl. Eurocontrol, Handling, Crew mode, Reputation Bonus/Penalties)
             job_reward = job.reward_usd if job else 0.0
             is_leased = (aircraft.ownership == "LEASED")
             effective_exclude_crew = (
@@ -170,6 +207,7 @@ class FlightTracker:
                 if exclude_crew_cost is not None
                 else bool(self.exclude_crew_cost or (job and getattr(job, "exclude_crew_cost", False)))
             )
+            old_reputation = company.reputation if company.reputation is not None else 100.0
             financials = EconomyService.calculate_flight_financials(
                 category=aircraft.category,
                 fuel_burned_kg=fuel_burned,
@@ -178,8 +216,18 @@ class FlightTracker:
                 is_leased=is_leased,
                 lease_rate_hourly=aircraft.hourly_lease_rate,
                 is_home_base=is_home_base,
-                exclude_crew_cost=effective_exclude_crew
+                exclude_crew_cost=effective_exclude_crew,
+                mtow_kg=aircraft.mtow_kg or 0.0,
+                distance_nm=dist_nm,
+                pax_count=pax_count,
+                is_ifr=is_ifr,
+                has_salaried_crew=has_salaried_crew,
+                company_reputation=old_reputation,
+                touchdown_rating=self.touchdown_rating,
+                max_g=self.max_g,
+                min_g=self.min_g
             )
+            company.reputation = financials["new_reputation"]
             
             # 3. Calculate and apply wear
             wear = MaintenanceService.calculate_flight_wear(
@@ -219,6 +267,7 @@ class FlightTracker:
                 start_time=self.start_time,
                 end_time=end_time,
                 flight_duration_min=round(duration_hours * 60, 1),
+                distance_flown_nm=round(dist_nm, 1),
                 fuel_used_kg=round(fuel_burned, 1),
                 max_g_force=round(self.max_g, 2),
                 min_g_force=round(self.min_g, 2),
@@ -230,6 +279,14 @@ class FlightTracker:
                 landing_fee_usd=financials["landing_fee"],
                 lease_cost_usd=financials["lease_cost"],
                 crew_cost_usd=financials["crew_cost"],
+                nav_fee_eur=financials["nav_fee"],
+                handling_fee_eur=financials["handling_fee"],
+                reputation_delta=financials["reputation_delta"],
+                reputation_bonus_eur=financials["reputation_bonus_eur"],
+                penalty_eur=financials["penalty_eur"],
+                flight_rules=eff_rules,
+                pax_count=pax_count,
+                tour_id=eff_tour_id,
                 net_profit_usd=financials["net_profit"],
                 notes=diversion_note,
                 status="COMPLETED"
@@ -243,12 +300,17 @@ class FlightTracker:
             route_str = f"{orig} ➔ {dest}"
 
             if financials["gross_revenue"] > 0:
+                bonus_note = ""
+                if financials["reputation_bonus_eur"] > 0:
+                    bonus_note = f" (incl. Bonus Qualità +{financials['reputation_bonus_pct']:.0f}% = +{financials['reputation_bonus_eur']:.2f} €)"
+                elif financials["reputation_bonus_eur"] < 0:
+                    bonus_note = f" (riduzione reputazione {financials['reputation_bonus_pct']:.0f}%)"
                 await EconomyService.record_transaction(
                     session=session,
                     category="REVENUE",
                     title=f"Ricavo Volo {log.flight_number} ({route_str})",
                     amount_eur=financials["gross_revenue"],
-                    description=f"Compenso contratto completato con {aircraft.tail_number}",
+                    description=f"Compenso contratto completato con {aircraft.tail_number}{bonus_note}",
                     aircraft_tail=aircraft.tail_number,
                     flight_id=log.id,
                     company=company
@@ -304,6 +366,39 @@ class FlightTracker:
                     flight_id=log.id,
                     company=company
                 )
+            if financials["nav_fee"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="NAV_FEE",
+                    title=f"Navigazione Eurocontrol {route_str}",
+                    amount_eur=-financials["nav_fee"],
+                    description=f"Tariffa di rotta IFR su {dist_nm:.0f} NM per {aircraft.tail_number}",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["handling_fee"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="HANDLING",
+                    title=f"Catering & Handling ({pax_count} Pax)",
+                    amount_eur=-financials["handling_fee"],
+                    description=f"Servizi passeggeri, catering e imbarco per {route_str} ({aircraft.category})",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
+            if financials["penalty_eur"] > 0:
+                await EconomyService.record_transaction(
+                    session=session,
+                    category="PENALTY",
+                    title=f"Penale / Risarcimento Atterraggio ({self.touchdown_rating or 'HARD'})",
+                    amount_eur=-financials["penalty_eur"],
+                    description=f"Indennizzo passeggeri e ispezione straordinaria per atterraggio {self.touchdown_rating} ({self.touchdown_fpm} fpm)",
+                    aircraft_tail=aircraft.tail_number,
+                    flight_id=log.id,
+                    company=company
+                )
 
             await session.commit()
             
@@ -316,7 +411,10 @@ class FlightTracker:
                 "origin_icao": orig_icao,
                 "destination_icao": final_dest,
                 "duration_min": log.flight_duration_min,
+                "distance_nm": log.distance_flown_nm,
                 "fuel_used_kg": log.fuel_used_kg,
+                "flight_rules": eff_rules,
+                "tour_id": eff_tour_id,
                 "notes": diversion_note,
                 "financials": financials,
                 "wear": wear,
@@ -325,6 +423,11 @@ class FlightTracker:
                     "g": self.touchdown_g,
                     "rating": self.touchdown_rating
                 },
+                "reputation": {
+                    "old": old_reputation,
+                    "delta": financials["reputation_delta"],
+                    "new": company.reputation,
+                },
                 "new_cash_balance": company.cash_balance
             }
             
@@ -332,6 +435,8 @@ class FlightTracker:
             self.active_aircraft_id = None
             self.active_job_id = None
             self.exclude_crew_cost = False
+            self.flight_rules = "IFR"
+            self.tour_id = None
             return result
 
 flight_tracker = FlightTracker()
