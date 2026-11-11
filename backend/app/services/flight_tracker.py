@@ -153,6 +153,12 @@ class FlightTracker:
                 session.add(company)
                 await session.flush()
                 
+            orig_icao = job.origin_icao if job else aircraft.current_icao
+            planned_dest = job.destination_icao if job else aircraft.current_icao
+            final_dest = actual_arrival_icao.strip().upper() if (actual_arrival_icao and actual_arrival_icao.strip()) else planned_dest
+            
+            is_home_base = bool(company.home_base_icao and final_dest.upper() == company.home_base_icao.upper())
+
             # 2. Financial calculation
             job_reward = job.reward_usd if job else 0.0
             is_leased = (aircraft.ownership == "LEASED")
@@ -162,7 +168,8 @@ class FlightTracker:
                 flight_hours=duration_hours,
                 job_reward=job_reward,
                 is_leased=is_leased,
-                lease_rate_hourly=aircraft.hourly_lease_rate
+                lease_rate_hourly=aircraft.hourly_lease_rate,
+                is_home_base=is_home_base
             )
             
             # 3. Calculate and apply wear
@@ -184,10 +191,6 @@ class FlightTracker:
             aircraft.engine_hours += duration_hours
             aircraft.fuel_quantity_kg = self.current_fuel_kg
             aircraft.is_in_flight = False
-            
-            orig_icao = job.origin_icao if job else aircraft.current_icao
-            planned_dest = job.destination_icao if job else aircraft.current_icao
-            final_dest = actual_arrival_icao.strip().upper() if (actual_arrival_icao and actual_arrival_icao.strip()) else planned_dest
             
             diversion_note = None
             if final_dest != planned_dest:
@@ -252,12 +255,19 @@ class FlightTracker:
                     company=company
                 )
             if financials["landing_fee"] > 0:
+                discount_pct = financials.get("landing_fee_discount_pct", 0)
+                fee_title = f"Tassa Atterraggio {dest} (Base Operativa -{discount_pct}%)" if is_home_base else f"Tassa Atterraggio {dest}"
+                fee_desc = (
+                    f"Tariffa residente Base Operativa {dest} (-{discount_pct}% su {aircraft.tail_number}, {aircraft.category})"
+                    if is_home_base
+                    else f"Tassa aeroportuale e assistenza a terra per {aircraft.tail_number} ({aircraft.category})"
+                )
                 await EconomyService.record_transaction(
                     session=session,
                     category="LANDING_FEE",
-                    title=f"Tassa Atterraggio {dest}",
+                    title=fee_title,
                     amount_eur=-financials["landing_fee"],
-                    description=f"Tassa aeroportuale e assistenza a terra per {aircraft.tail_number} ({aircraft.category})",
+                    description=fee_desc,
                     aircraft_tail=aircraft.tail_number,
                     flight_id=log.id,
                     company=company

@@ -5,10 +5,12 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.models.schema import Aircraft, Job, FlightLog, Company
 from app.services.flight_tracker import flight_tracker
 from app.services.xp_connector import xp_connector
 from app.services.dealerships import DealershipService
+from app.services.economy import EconomyService
 
 router = APIRouter(prefix="/flights", tags=["Flights"])
 
@@ -140,6 +142,41 @@ async def start_flight(req: StartFlightRequest, db: AsyncSession = Depends(get_d
             status_code=400,
             detail=f"Posizione non valida in X-Plane 12! L'aereo si trova a {dist:.1f} NM dall'aeroporto di partenza pianificato ({origin_icao}). Spostati a {origin_icao} oppure aggiorna il piano di volo."
         )
+
+    # Smart Pre-Flight Fuel Delta Sync:
+    # Se il pilota ha aggiunto carburante direttamente in X-Plane 12 (es. da 315 kg a 532 kg),
+    # addebita SOLO la differenza rifornita (217 kg) ed evita di sovrascrivere il serbatoio del sim.
+    xp_fuel = round(t.get("fuel_total_kg", 0.0), 1)
+    saved_fuel = round(aircraft.fuel_quantity_kg or 0.0, 1)
+    preflight_refuel_kg = 0.0
+    preflight_refuel_cost = 0.0
+
+    if xp_fuel > saved_fuel + 2.0:
+        capped_xp_fuel = min(aircraft.fuel_capacity_kg or xp_fuel, xp_fuel) if (aircraft.fuel_capacity_kg and aircraft.fuel_capacity_kg > 0) else xp_fuel
+        added_kg = round(capped_xp_fuel - saved_fuel, 1)
+        if added_kg > 2.0:
+            refuel_cost = round(added_kg * settings.DEFAULT_FUEL_PRICE_EUR_PER_KG, 2)
+            if comp and comp.cash_balance < refuel_cost:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Fondi insufficienti per il carburante imbarcato in X-Plane ({added_kg:.1f} kg = € {refuel_cost:,.2f}). Saldo attuale: € {comp.cash_balance:,.2f}."
+                )
+            if comp:
+                await EconomyService.record_transaction(
+                    session=db,
+                    category="FUEL",
+                    title=f"Rifornimento Pre-Volo ({added_kg:.1f} kg a {origin_icao})",
+                    amount_eur=-refuel_cost,
+                    description=f"Delta carburante aggiunto in X-Plane 12 ({saved_fuel:.1f} -> {capped_xp_fuel:.1f} kg) per {aircraft.tail_number}",
+                    aircraft_tail=aircraft.tail_number,
+                    company=comp
+                )
+            aircraft.fuel_quantity_kg = capped_xp_fuel
+            preflight_refuel_kg = added_kg
+            preflight_refuel_cost = refuel_cost
+    elif xp_fuel > 0.5 and abs(xp_fuel - saved_fuel) > 2.0 and xp_fuel < saved_fuel:
+        # Adotta il carburante effettivo di X-Plane senza addebiti se inferiore al residuo salvato
+        aircraft.fuel_quantity_kg = xp_fuel
             
     aircraft.is_in_flight = True
     if job:
@@ -149,13 +186,20 @@ async def start_flight(req: StartFlightRequest, db: AsyncSession = Depends(get_d
     
     flight_tracker.start_flight(aircraft.id, job.id if job else None)
     
-    # Auto-sync fuel to X-Plane if simulator is running
-    xp_connector.set_fuel_kg(aircraft.fuel_quantity_kg)
+    # Se X-Plane riportava serbatoio vuoto (0 kg), ripristina quello salvato in SkyOps
+    if xp_fuel <= 0.5 and aircraft.fuel_quantity_kg > 0:
+        xp_connector.set_fuel_kg(aircraft.fuel_quantity_kg)
+
+    msg = f"Volo avviato da {origin_icao} per {aircraft.tail_number}."
+    if preflight_refuel_kg > 0:
+        msg += f" Rilevato rifornimento pre-volo: +{preflight_refuel_kg:.1f} kg (€ {preflight_refuel_cost:,.2f})."
         
     return {
-        "message": f"Volo avviato da {origin_icao} per {aircraft.tail_number}.",
+        "message": msg,
         "phase": flight_tracker.phase,
-        "job_id": job.id if job else None
+        "job_id": job.id if job else None,
+        "preflight_refuel_kg": preflight_refuel_kg,
+        "preflight_refuel_cost": preflight_refuel_cost
     }
 
 @router.post("/finalize")

@@ -876,12 +876,53 @@ export default function App() {
       if (res.ok) {
         setLastFlightSummary(null);
         showNotice(data.message || `Volo avviato per ${selectedAircraft.tail_number}!`, 'success');
+        fetchStatus();
+        fetchFleet();
         fetchActiveFlight();
+        fetchFinances();
       } else {
         showNotice(data.detail, 'error');
       }
     } catch (e) {
       showNotice('Errore avvio volo', 'error');
+    }
+  };
+
+  const handleRefuelAircraft = async () => {
+    if (!selectedAircraft) return;
+    const currentKg = Number(selectedAircraft.fuel_quantity_kg || 0).toFixed(1);
+    const maxKg = Number(selectedAircraft.fuel_capacity_kg || 0).toFixed(0);
+    const targetInput = prompt(
+      `Carburante attuale salvato: ${currentKg} kg / Max ${maxKg} kg.\n` +
+      `Inserisci quantità totale desiderata in kg (pagherai SOLO la differenza aggiunta a 1,75 €/kg):`,
+      maxKg
+    );
+    if (!targetInput) return;
+    const parsedTarget = parseFloat(targetInput);
+    if (Number.isNaN(parsedTarget) || parsedTarget < 0) {
+      showNotice('Valore carburante non valido.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/fleet/${selectedAircraft.id}/refuel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_fuel_kg: parsedTarget })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const addedNote = data.fuel_added_kg > 0
+          ? ` (+${data.fuel_added_kg.toFixed(1)} kg aggiunti, costo ${formatEuro(data.cost_eur)})`
+          : '';
+        showNotice(`${data.message}${addedNote}`, 'success');
+        fetchStatus();
+        fetchFleet();
+        fetchFinances();
+      } else {
+        showNotice(data.detail || 'Errore rifornimento', 'error');
+      }
+    } catch (e) {
+      showNotice('Errore di rete durante il rifornimento', 'error');
     }
   };
 
@@ -1351,7 +1392,16 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  {flightPhase === 'OFFLINE' && selectedAircraft && (
+                    <button
+                      onClick={handleRefuelAircraft}
+                      className="flex items-center gap-2 font-semibold px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition text-sm"
+                      title="Rifornisci il serbatoio pagando solo i kg aggiunti (1,75 €/kg)"
+                    >
+                      <Fuel size={15} /> Rifornisci
+                    </button>
+                  )}
                   {flightPhase === 'OFFLINE' ? (
                     <button
                       onClick={() => handleStartFlight()}
@@ -1583,11 +1633,18 @@ export default function App() {
                       <span className="text-emerald-400 font-bold">+{formatEuro(lastFlightSummary.financials?.gross_revenue)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">(-) Carburante Jet-A1:</span>
-                      <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials?.fuel_cost)}</span>
+                      <span className="text-slate-400">Carburante Bruciato:</span>
+                      <span className="text-slate-300 font-mono text-[11px]">Già pagato al rifornimento (€ 0,00)</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">(-) Tassa Atterraggio:</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        (-) Tassa Atterraggio:
+                        {lastFlightSummary.financials?.is_home_base && (
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">
+                            BASE -{lastFlightSummary.financials?.landing_fee_discount_pct}%
+                          </span>
+                        )}
+                      </span>
                       <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials?.landing_fee)}</span>
                     </div>
                     {lastFlightSummary.financials?.lease_cost > 0 && (
@@ -1877,20 +1934,7 @@ export default function App() {
                           <RefreshCw size={13} /> Sincronizza su XP12
                         </button>
                         <button
-                          onClick={async () => {
-                            const target = prompt(`Inserisci quantità carburante desiderata in kg (Max ${selectedAircraft.fuel_capacity_kg} kg):`, selectedAircraft.fuel_capacity_kg);
-                            if (target) {
-                              const res = await fetch(`/api/fleet/${selectedAircraft.id}/refuel`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ target_fuel_kg: parseFloat(target) })
-                              });
-                              const data = await res.json();
-                              showNotice(data.message, 'success');
-                              fetchStatus();
-                              fetchFleet();
-                            }
-                          }}
+                          onClick={handleRefuelAircraft}
                           className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition"
                         >
                           <Fuel size={13} /> Rifornisci

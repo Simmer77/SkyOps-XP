@@ -47,23 +47,32 @@ class EconomyService:
         flight_hours: float,
         job_reward: float,
         is_leased: bool = False,
-        lease_rate_hourly: float = 0.0
-    ) -> Dict[str, float]:
+        lease_rate_hourly: float = 0.0,
+        is_home_base: bool = False
+    ) -> Dict[str, Any]:
         """
         Calcola il bilancio finanziario completo del volo in Euro (€).
+        Il carburante NON viene addebitato al consumo ma solo al momento del rifornimento.
         """
         specs = CATEGORY_SPECS.get(category, CATEGORY_SPECS["GA"])
         
-        # 1. Costo Carburante: kg consumati * prezzo al kg Jet-A1
-        fuel_cost = round(fuel_burned_kg * settings.DEFAULT_FUEL_PRICE_EUR_PER_KG, 2)
+        # 1. Costo Carburante a fine volo: 0 € (viene addebitato solo quando rifornisci il serbatoio)
+        fuel_cost = 0.0
         
-        # 2. Tassa d'atterraggio (Landing Fee): base + quota tonnellata MTOW
-        landing_fee = round(specs["base_landing_fee_eur"] + (specs["avg_mtow_tonnes"] * specs["fee_per_tonne_eur"]), 2)
+        # 2. Tassa d'atterraggio (Landing Fee): base + quota tonnellata MTOW con tariffa agevolata alla Base Operativa
+        base_fee = specs["base_landing_fee_eur"] + (specs["avg_mtow_tonnes"] * specs["fee_per_tonne_eur"])
+        if is_home_base:
+            multiplier = 0.65 if is_leased else 0.30
+            discount_pct = 35 if is_leased else 70
+        else:
+            multiplier = 1.0
+            discount_pct = 0
+        landing_fee = round(base_fee * multiplier, 2)
         
         # 3. Costo Noleggio se aereo noleggiato (Block hours * tariffa)
         lease_cost = round(flight_hours * lease_rate_hourly, 2) if is_leased else 0.0
         
-        # 4. Spese totali e utile netto
+        # 4. Spese totali e utile netto (al netto dei rifornimenti già pagati alla pompa)
         total_expenses = round(fuel_cost + landing_fee + lease_cost, 2)
         net_profit = round(job_reward - total_expenses, 2)
         
@@ -73,7 +82,9 @@ class EconomyService:
             "landing_fee": landing_fee,
             "lease_cost": lease_cost,
             "total_expenses": total_expenses,
-            "net_profit": net_profit
+            "net_profit": net_profit,
+            "is_home_base": is_home_base,
+            "landing_fee_discount_pct": discount_pct
         }
 
     @staticmethod
@@ -408,11 +419,12 @@ class EconomyService:
                 "fuel_type": "Jet-A1 Kerosene",
                 "price_per_kg_eur": settings.DEFAULT_FUEL_PRICE_EUR_PER_KG,
                 "price_per_litre_approx_eur": round(settings.DEFAULT_FUEL_PRICE_EUR_PER_KG * 0.80, 2),
-                "formula": "Costo Carburante = Kg Carburante Bruciato × 1.75 €/kg",
-                "notes": "Basato sulla densità standard ICAO di 0.80 kg/L e media prezzi IATA aeroporti europei."
+                "formula": "Costo Carburante = Kg Riforniti (Delta nel serbatoio) × 1.75 €/kg",
+                "notes": "Paghi SOLO alla pompa quando rifornisci (o aggiungi carburante in X-Plane 12 prima del decollo). Il carburante residuo già a bordo e il consumo in volo non generano doppi addebiti."
             },
             "landing_fee_rules": {
-                "formula": "Tassa Atterraggio = Tassa Base Aeroporto + (MTOW velivolo in Tonnellate × Quota/Tonnellata)",
+                "formula": "Tassa Atterraggio = (Tassa Base + MTOW × Quota/t) × Sconto Base Operativa",
+                "notes": "Gli atterraggi presso la tua Base Operativa godono di tariffa residente scontata (-70% per flotta di proprietà, -35% per velivoli a noleggio).",
                 "categories": [
                     {
                         "category": "General Aviation (GA)",

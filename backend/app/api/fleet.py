@@ -610,7 +610,9 @@ async def refuel_aircraft(aircraft_id: int, req: RefuelRequest, db: AsyncSession
     return {
         "message": f"Rifornimento completato: {target:.1f} kg a bordo.",
         "cost_eur": cost_eur,
-        "fuel_added_kg": max(0.0, diff_kg)
+        "fuel_added_kg": max(0.0, diff_kg),
+        "new_fuel_kg": aircraft.fuel_quantity_kg,
+        "new_cash_balance": company.cash_balance if company else None
     }
 
 @router.post("/{aircraft_id}/service")
