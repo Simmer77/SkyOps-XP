@@ -82,6 +82,10 @@ class XPConnector:
             
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            except Exception:
+                pass
             self.sock.setblocking(False)
             self.sock.bind(("0.0.0.0", self.listen_port))
             self.is_running = True

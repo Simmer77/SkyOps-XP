@@ -69,6 +69,8 @@ async def init_db():
             ("flight_logs", "tour_id", "INTEGER"),
             ("company", "operating_month", "TEXT DEFAULT ''"),
             ("company", "economy_mode", "TEXT DEFAULT 'REALISTIC'"),
+            ("company", "language", "TEXT DEFAULT 'EN'"),
+            ("company", "currency", "TEXT DEFAULT 'EUR'"),
             ("aircraft", "monthly_payment_eur", "FLOAT DEFAULT 0.0"),
             ("aircraft", "remaining_payments_months", "INTEGER DEFAULT 0"),
             ("financial_transactions", "operating_month", "TEXT DEFAULT ''"),

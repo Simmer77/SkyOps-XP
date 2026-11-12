@@ -4,8 +4,9 @@ import {
   Fuel, AlertTriangle, CheckCircle, ArrowRight, RefreshCw, 
   MapPin, Zap, Shield, ShieldAlert, Award, Plus, Trash2, Key, Info, HelpCircle, Clock,
   Edit3, Camera, Calendar, Cpu, DollarSign, TrendingUp, TrendingDown,
-  ArrowUpRight, ArrowDownRight, Wallet, FileText, Filter
+  ArrowUpRight, ArrowDownRight, Wallet, FileText, Filter, Globe
 } from 'lucide-react';
+import { getTranslation } from './i18n.js';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('flight'); // 'flight', 'fleet', 'rental', 'jobs', 'simbrief', 'maintenance', 'finances', 'logbook'
@@ -60,6 +61,40 @@ export default function App() {
   const [acquireTail, setAcquireTail] = useState('');
   const [acquireIcao, setAcquireIcao] = useState('LIRN');
 
+  // Language & Currency State
+  const [lang, setLang] = useState(() => localStorage.getItem('skyops_lang') || 'it');
+  const [currency, setCurrency] = useState(() => localStorage.getItem('skyops_currency') || 'EUR');
+
+  const t = (key, fallback = '') => getTranslation(lang, key, fallback);
+
+  const changeLang = async (newLang) => {
+    const l = (newLang || 'en').toLowerCase();
+    setLang(l);
+    localStorage.setItem('skyops_lang', l);
+    localStorage.setItem('skyops_lang_user_set', '1');
+    try {
+      await fetch('/api/company/preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: l.toUpperCase() })
+      });
+    } catch (e) { /* ignore */ }
+  };
+
+  const changeCurrency = async (newCurr) => {
+    const c = (newCurr || 'EUR').toUpperCase();
+    setCurrency(c);
+    localStorage.setItem('skyops_currency', c);
+    localStorage.setItem('skyops_curr_user_set', '1');
+    try {
+      await fetch('/api/company/preferences', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currency: c })
+      });
+    } catch (e) { /* ignore */ }
+  };
+
   // Onboarding Profile State
   const [profileForm, setProfileForm] = useState({
     name: 'AeroSky Executive Ops',
@@ -67,6 +102,8 @@ export default function App() {
     difficulty_level: 'REALISTIC',
     economy_mode: 'REALISTIC',
     starting_capital_eur: 150000,
+    language: 'IT',
+    currency: 'EUR',
     simbrief_id: '',
     xp12_install_path: ''
   });
@@ -142,10 +179,18 @@ export default function App() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  const formatEuro = (val) => {
-    if (val === undefined || val === null || isNaN(val)) return '€ 0,00';
-    return '€ ' + Number(val).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatMoney = (val, curr = currency) => {
+    if (val === undefined || val === null || isNaN(val)) {
+      return curr === 'USD' ? '$ 0.00' : '€ 0,00';
+    }
+    const isUsd = curr === 'USD';
+    const sym = isUsd ? '$' : '€';
+    const locale = isUsd ? 'en-US' : 'it-IT';
+    const numStr = Number(val).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${sym} ${numStr}`;
   };
+
+  const formatEuro = (val) => formatMoney(val, currency);
 
   const formatVirtualDate = (dateStr) => {
     if (!dateStr) return '';
@@ -189,6 +234,12 @@ export default function App() {
         const savedSimbrief = data.company?.simbrief_pilot_id || data.company?.simbrief_username;
         if (savedSimbrief && !simbriefInput) {
           setSimbriefInput(savedSimbrief);
+        }
+        if (data.company?.language && !localStorage.getItem('skyops_lang_user_set')) {
+          setLang(data.company.language.toLowerCase());
+        }
+        if (data.company?.currency && !localStorage.getItem('skyops_curr_user_set')) {
+          setCurrency(data.company.currency.toUpperCase());
         }
       }
     } catch (e) {
@@ -1239,11 +1290,11 @@ export default function App() {
   // Onboarding Screen if no active profile exists
   if (systemStatus && systemStatus.has_profile === false) {
     const difficultyOptions = [
-      { id: 'HARDCORE', label: 'Pilota Indipendente (Hardcore)', capital: 35000, desc: 'Capitale minimo. Dovrai partire noleggiando piccoli monomotori GA a ore.' },
-      { id: 'REALISTIC', label: 'Start-up Regionale (Realistica)', capital: 150000, desc: 'Perfetta per noleggiare GA/BizJet o versare l’anticipo di un piccolo usato.' },
-      { id: 'STANDARD', label: 'Compagnia Emergente (Standard)', capital: 500000, desc: 'Budget per acquistare subito il primo aereo GA o avviare un leasing VLJ.' },
-      { id: 'EXECUTIVE', label: 'Operatore Executive (Avanzato)', capital: 2500000, desc: 'Capitale solido per acquisire un Vision Jet o accedere ai Business Jet.' },
-      { id: 'MAGNATE', label: 'Major Airline / Magnate', capital: 25000000, desc: 'Alto capitale per acquistare flotta BizJet e Airliner commerciali.' }
+      { id: 'HARDCORE', label: lang === 'it' ? 'Pilota Indipendente (Hardcore)' : 'Independent Pilot (Hardcore)', capital: 35000, desc: lang === 'it' ? 'Capitale minimo. Dovrai partire noleggiando piccoli monomotori GA a ore.' : 'Minimal capital. Start by renting single-engine GA aircraft by the hour.' },
+      { id: 'REALISTIC', label: lang === 'it' ? 'Start-up Regionale (Realistica)' : 'Regional Start-up (Realistic)', capital: 150000, desc: lang === 'it' ? 'Perfetta per noleggiare GA/BizJet o versare l’anticipo di un piccolo usato.' : 'Ideal to lease GA/BizJet or place a down payment on a small used plane.' },
+      { id: 'STANDARD', label: lang === 'it' ? 'Compagnia Emergente (Standard)' : 'Emerging Airline (Standard)', capital: 500000, desc: lang === 'it' ? 'Budget per acquistare subito il primo aereo GA o avviare un leasing VLJ.' : 'Budget to purchase your first GA or start a VLJ lease.' },
+      { id: 'EXECUTIVE', label: lang === 'it' ? 'Operatore Executive (Avanzato)' : 'Executive Operator (Advanced)', capital: 2500000, desc: lang === 'it' ? 'Capitale solido per acquisire un Vision Jet o accedere ai Business Jet.' : 'Solid capital to acquire a Vision Jet or access mid-size Business Jets.' },
+      { id: 'MAGNATE', label: lang === 'it' ? 'Major Airline / Magnate' : 'Major Airline / Magnate', capital: 25000000, desc: lang === 'it' ? 'Alto capitale per acquistare flotta BizJet e Airliner commerciali.' : 'High budget to purchase BizJet fleets and commercial airliners.' }
     ];
 
     return (
@@ -1267,30 +1318,101 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-black tracking-wider text-white">SKYOPS XP12</h1>
-                <span className="text-xs font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">CONFIGURAZIONE INIZIALE</span>
+                <span className="text-xs font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono">
+                  {lang === 'it' ? 'CONFIGURAZIONE INIZIALE' : 'INITIAL SETUP'}
+                </span>
               </div>
               <p className="text-sm text-slate-400 mt-0.5">
-                Crea il profilo della tua compagnia aerea e sincronizza gli aeromobili dal tuo X-Plane 12.
+                {lang === 'it'
+                  ? 'Crea il profilo della tua compagnia aerea e sincronizza gli aeromobili dal tuo X-Plane 12.'
+                  : 'Create your airline profile and synchronize installed aircraft from X-Plane 12.'}
               </p>
             </div>
           </div>
 
           <form onSubmit={handleCreateProfile} className="space-y-5 font-mono text-xs" noValidate>
+            {/* Language & Currency Selection */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3.5 bg-slate-900/90 rounded-xl border border-cyan-500/30">
+              <div>
+                <label className="text-slate-300 block mb-1.5 font-semibold">
+                  🌐 {lang === 'it' ? 'Lingua Interfaccia' : 'Interface Language'}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { changeLang('en'); setProfileForm(p => ({ ...p, language: 'EN' })); }}
+                    className={`p-2 rounded-lg border text-center font-bold text-xs transition ${
+                      lang === 'en'
+                        ? 'bg-cyan-950/60 border-cyan-400 text-cyan-300 ring-1 ring-cyan-400'
+                        : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    🇬🇧 English (EN)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { changeLang('it'); setProfileForm(p => ({ ...p, language: 'IT' })); }}
+                    className={`p-2 rounded-lg border text-center font-bold text-xs transition ${
+                      lang === 'it'
+                        ? 'bg-cyan-950/60 border-cyan-400 text-cyan-300 ring-1 ring-cyan-400'
+                        : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    🇮🇹 Italiano (IT)
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 block mb-1.5 font-semibold">
+                  💰 {lang === 'it' ? 'Valuta di Bilancio' : 'Ledger Currency'}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { changeCurrency('EUR'); setProfileForm(p => ({ ...p, currency: 'EUR' })); }}
+                    className={`p-2 rounded-lg border text-center font-bold text-xs transition ${
+                      currency === 'EUR'
+                        ? 'bg-emerald-950/60 border-emerald-400 text-emerald-300 ring-1 ring-emerald-400'
+                        : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    € EUR (Euro)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { changeCurrency('USD'); setProfileForm(p => ({ ...p, currency: 'USD' })); }}
+                    className={`p-2 rounded-lg border text-center font-bold text-xs transition ${
+                      currency === 'USD'
+                        ? 'bg-emerald-950/60 border-emerald-400 text-emerald-300 ring-1 ring-emerald-400'
+                        : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    $ USD (US Dollar)
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2">
-                <label className="text-slate-300 block mb-1.5 font-semibold">Nome della Società Aerea *</label>
+                <label className="text-slate-300 block mb-1.5 font-semibold">
+                  {lang === 'it' ? 'Nome della Società Aerea *' : 'Airline Name *'}
+                </label>
                 <input
                   type="text"
                   required
                   value={profileForm.name}
                   onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                  placeholder="es. AeroSky Executive Ops"
+                  placeholder={lang === 'it' ? 'es. AeroSky Executive Ops' : 'e.g. AeroSky Executive Ops'}
                   className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-400"
                 />
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1.5 font-semibold">Base Operativa (ICAO) *</label>
+                <label className="text-slate-300 block mb-1.5 font-semibold">
+                  {lang === 'it' ? 'Base Operativa (ICAO) *' : 'Home Base (ICAO) *'}
+                </label>
                 <input
                   type="text"
                   required
@@ -1360,27 +1482,33 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
               <div>
-                <label className="text-slate-300 block mb-1.5 font-semibold">SimBrief Pilot ID / Username (Opzionale)</label>
+                <label className="text-slate-300 block mb-1.5 font-semibold">
+                  {lang === 'it' ? 'SimBrief Pilot ID / Username (Opzionale)' : 'SimBrief Pilot ID / Username (Optional)'}
+                </label>
                 <input
                   type="text"
                   value={profileForm.simbrief_id}
                   onChange={(e) => setProfileForm({ ...profileForm, simbrief_id: e.target.value })}
-                  placeholder="es. 1106351"
+                  placeholder={lang === 'it' ? 'es. 1106351' : 'e.g. 1106351'}
                   className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-white focus:outline-none focus:border-cyan-400"
                 />
               </div>
 
               <div>
-                <label className="text-slate-300 block mb-1.5 font-semibold">Cartella Installazione X-Plane 12</label>
+                <label className="text-slate-300 block mb-1.5 font-semibold">
+                  {lang === 'it' ? 'Cartella Principale X-Plane 12' : 'X-Plane 12 Root Folder'}
+                </label>
                 <input
                   type="text"
                   value={profileForm.xp12_install_path}
                   onChange={(e) => setProfileForm({ ...profileForm, xp12_install_path: e.target.value })}
-                  placeholder="/percorso/a/X-Plane 12"
+                  placeholder={lang === 'it' ? '/percorso/a/X-Plane 12' : 'C:\\X-Plane 12 or /path/to/X-Plane 12'}
                   className="w-full bg-slate-900 border border-slate-700 p-2.5 rounded-lg text-slate-200 focus:outline-none focus:border-cyan-400"
                 />
                 {systemStatus.xp12_detected_path && (
-                  <span className="text-[10px] text-emerald-400 mt-1 block">✓ X-Plane 12 rilevato automaticamente nel sistema</span>
+                  <span className="text-[10px] text-emerald-400 mt-1 block">
+                    {lang === 'it' ? '✓ X-Plane 12 rilevato automaticamente nel sistema' : '✓ X-Plane 12 automatically detected'}
+                  </span>
                 )}
               </div>
             </div>
@@ -1392,7 +1520,7 @@ export default function App() {
                 className="w-full md:w-auto flex items-center justify-center gap-2.5 bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 text-white font-bold text-sm px-6 py-3 rounded-xl shadow-lg transition disabled:opacity-50"
               >
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-                Sincronizza il tuo X-Plane 12 & Crea Profilo
+                {lang === 'it' ? '✈️ Sincronizza il tuo X-Plane 12 & Crea Profilo' : '✈️ Synchronize your X-Plane 12 & Create Profile'}
               </button>
             </div>
           </form>
@@ -1435,12 +1563,34 @@ export default function App() {
             </div>
           </div>
 
-          {/* Quick Metrics Bar in € EURO */}
+          {/* Quick Metrics Bar & Settings */}
           <div className="flex flex-wrap items-center gap-3">
+            {/* Language & Currency Quick Switchers */}
+            <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-0.5 rounded-lg text-xs font-mono">
+              <button
+                type="button"
+                onClick={() => changeLang(lang === 'it' ? 'en' : 'it')}
+                className="px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 text-cyan-300 font-bold transition flex items-center gap-1 border border-slate-700/60"
+                title={lang === 'it' ? 'Passa alla lingua Inglese (Switch to English)' : 'Switch to Italian (Passa a Italiano)'}
+              >
+                <span>{lang === 'it' ? '🇮🇹 IT' : '🇬🇧 EN'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => changeCurrency(currency === 'EUR' ? 'USD' : 'EUR')}
+                className="px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-300 font-bold transition flex items-center gap-1 border border-slate-700/60"
+                title={currency === 'EUR' ? 'Switch to USD ($)' : 'Passa a EUR (€)'}
+              >
+                <span>{currency === 'EUR' ? '€ EUR' : '$ USD'}</span>
+              </button>
+            </div>
+
             <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
-              <span className="text-emerald-400 font-bold text-base">€</span>
+              <span className="text-emerald-400 font-bold text-base">{currency === 'USD' ? '$' : '€'}</span>
               <div>
-                <div className="text-[10px] text-slate-400 uppercase font-mono">Capitale Aziendale</div>
+                <div className="text-[10px] text-slate-400 uppercase font-mono">
+                  {lang === 'it' ? 'Capitale Aziendale' : 'Company Capital'}
+                </div>
                 <div className="text-sm font-bold font-mono text-emerald-400">
                   {formatEuro(systemStatus?.company?.cash_balance ?? 175000)}
                 </div>
@@ -1451,11 +1601,13 @@ export default function App() {
             <div 
               onClick={() => setActiveTab('finances')}
               className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 hover:border-amber-500/50 cursor-pointer px-3 py-1.5 rounded-lg transition"
-              title="Clicca per aprire Bilancio, Mese Operativo e Oneri Mensili"
+              title={lang === 'it' ? 'Clicca per aprire Bilancio, Mese Operativo e Oneri Mensili' : 'Click to view Finances, Operating Month & Monthly Charges'}
             >
               <Calendar size={16} className="text-amber-400" />
               <div>
-                <div className="text-[10px] text-slate-400 uppercase font-mono">Mese Operativo</div>
+                <div className="text-[10px] text-slate-400 uppercase font-mono">
+                  {lang === 'it' ? 'Mese Operativo' : 'Operating Month'}
+                </div>
                 <div className="text-sm font-bold font-mono text-amber-300">
                   {systemStatus?.company?.operating_month_label || financialOverview?.operating_month_label || formatOperatingMonth(new Date().toISOString().slice(0, 7))}
                   <span className="text-[11px] text-slate-400 font-normal ml-1.5">
@@ -1468,7 +1620,9 @@ export default function App() {
             <div className="flex items-center gap-2 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-lg">
               <Award size={16} className="text-cyan-400" />
               <div>
-                <div className="text-[10px] text-slate-400 uppercase font-mono">Reputazione</div>
+                <div className="text-[10px] text-slate-400 uppercase font-mono">
+                  {lang === 'it' ? 'Reputazione' : 'Reputation'}
+                </div>
                 <div className="text-sm font-bold font-mono text-cyan-300">
                   {systemStatus?.company?.reputation || 100}%
                 </div>
@@ -1492,16 +1646,16 @@ export default function App() {
                 ? 'XP12 OFFLINE'
                 : xpAircraftIcao
                   ? `XP12: ${xpAircraftIcao}${isModelMismatch ? ' ⚠️' : ''}`
-                  : 'XP12 CONNESSO'}
+                  : (lang === 'it' ? 'XP12 CONNESSO' : 'XP12 CONNECTED')}
             </div>
 
             {/* Reset Profile Button */}
             <button
               onClick={handleResetProfile}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/50 hover:bg-rose-900/80 border border-rose-800/60 text-rose-300 text-xs font-mono transition"
-              title="Cancella profilo aziendale e ricomincia da zero"
+              title={lang === 'it' ? 'Cancella profilo aziendale e ricomincia da zero' : 'Reset airline profile and start over'}
             >
-              <Trash2 size={14} /> Reset Profilo
+              <Trash2 size={14} /> {lang === 'it' ? 'Reset Profilo' : 'Reset Profile'}
             </button>
           </div>
         </div>
@@ -1513,14 +1667,14 @@ export default function App() {
         <aside className="lg:w-72 shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800/80 bg-slate-950/60 p-4 flex flex-col justify-between gap-4">
           <nav className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible pb-1 lg:pb-0">
             {[
-              { id: 'flight', label: 'Volo Attivo & HUD', icon: Gauge },
-              { id: 'fleet', label: 'Hangar (Proprietà)', icon: Plane },
-              { id: 'rental', label: 'Mercato & Noleggio', icon: Key },
-              { id: 'jobs', label: 'Incarichi & Contratti', icon: Briefcase },
-              { id: 'simbrief', label: 'Piano di Volo & Dispatch', icon: Radio },
-              { id: 'maintenance', label: 'Officina & Usura', icon: Wrench },
-              { id: 'finances', label: 'Bilancio & Finanze', icon: TrendingUp },
-              { id: 'logbook', label: 'Registro Voli', icon: BookOpen },
+              { id: 'flight', label: t('nav_cockpit', 'Volo Attivo & HUD'), icon: Gauge },
+              { id: 'fleet', label: t('nav_hangar', 'Hangar & Flotta'), icon: Plane },
+              { id: 'rental', label: t('nav_dealership', 'Mercato & Noleggio'), icon: Key },
+              { id: 'jobs', label: t('nav_jobs', 'Incarichi & Contratti'), icon: Briefcase },
+              { id: 'simbrief', label: lang === 'it' ? 'Piano di Volo & Dispatch' : 'Flight Plan & Dispatch', icon: Radio },
+              { id: 'maintenance', label: t('nav_maintenance', 'Officina & Usura'), icon: Wrench },
+              { id: 'finances', label: t('nav_finances', 'Bilancio & Finanze'), icon: TrendingUp },
+              { id: 'logbook', label: t('nav_logbook', 'Registro Voli & Tour'), icon: BookOpen },
             ].map((tab) => {
               const Icon = tab.icon;
               const active = activeTab === tab.id;

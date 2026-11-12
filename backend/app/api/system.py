@@ -42,6 +42,8 @@ async def get_system_status(db: AsyncSession = Depends(get_db)):
             "home_base_icao": company.home_base_icao or "LIRN",
             "difficulty_level": company.difficulty_level or "STANDARD",
             "economy_mode": (company.economy_mode or "REALISTIC").upper(),
+            "language": company.language or "EN",
+            "currency": company.currency or "EUR",
             "starting_capital_eur": company.starting_capital_eur or 150000.0,
             "cash_balance": company.cash_balance,
             "reputation": company.reputation,

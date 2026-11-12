@@ -237,12 +237,16 @@ os.makedirs(uploads_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 # Serve Frontend static assets if built
+possible_dist_paths = [
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../frontend/dist")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../frontend/dist")),
+    os.path.abspath(os.path.join(os.getcwd(), "frontend/dist")),
+    os.path.abspath(os.path.join(os.getcwd(), "../frontend/dist")),
+]
+frontend_dist = next((p for p in possible_dist_paths if os.path.isdir(p)), None)
 
-frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../SkyOps-XP/frontend/dist"))
-if not os.path.exists(frontend_dist):
-    frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
-
-if os.path.exists(frontend_dist):
+if frontend_dist and os.path.exists(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 else:
     @app.get("/")

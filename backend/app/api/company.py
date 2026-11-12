@@ -33,11 +33,17 @@ class CreateCompanyRequest(BaseModel):
     economy_mode: str = "REALISTIC"  # "REALISTIC" | "STANDARD"
     starting_capital_eur: Optional[float] = None
     simbrief_id: Optional[str] = ""
+    language: Optional[str] = "EN"
+    currency: Optional[str] = "EUR"
     xp12_install_path: Optional[str] = ""
     sync_xp12: bool = True
 
 class UpdateEconomyModeRequest(BaseModel):
     economy_mode: str  # "REALISTIC" | "STANDARD"
+
+class UpdatePreferencesRequest(BaseModel):
+    language: Optional[str] = None  # "EN" | "IT"
+    currency: Optional[str] = None  # "EUR" | "USD"
 
 class SyncXP12Request(BaseModel):
     xp12_install_path: Optional[str] = None
@@ -66,6 +72,14 @@ async def create_company_profile(req: CreateCompanyRequest, db: AsyncSession = D
     if econ_key not in ("REALISTIC", "STANDARD"):
         econ_key = "REALISTIC"
 
+    lang_key = (req.language or "EN").strip().upper()
+    if lang_key not in ("EN", "IT"):
+        lang_key = "EN"
+
+    curr_key = (req.currency or "EUR").strip().upper()
+    if curr_key not in ("EUR", "USD"):
+        curr_key = "EUR"
+
     company = Company(
         name=req.name.strip() or "SkyOps Aviation",
         home_base_icao=req.home_base_icao.strip().upper()[:4] or "LIRN",
@@ -73,6 +87,8 @@ async def create_company_profile(req: CreateCompanyRequest, db: AsyncSession = D
         starting_capital_eur=capital,
         difficulty_level=diff_key,
         economy_mode=econ_key,
+        language=lang_key,
+        currency=curr_key,
         reputation=100.0,
         virtual_date=datetime.now(timezone.utc),
         operating_day=1,
@@ -109,6 +125,28 @@ async def update_economy_mode(req: UpdateEconomyModeRequest, db: AsyncSession = 
     await db.commit()
     label = "Realistica (Margini 4–12%)" if mode == "REALISTIC" else "Standard (Margini Rilassati)"
     return {"status": "success", "economy_mode": mode, "message": f"Modalità economica impostata su: {label}"}
+
+@router.patch("/preferences")
+async def update_company_preferences(req: UpdatePreferencesRequest, db: AsyncSession = Depends(get_db)):
+    """Aggiorna le preferenze di lingua (EN/IT) e valuta (EUR/USD) della compagnia."""
+    comp = (await db.execute(select(Company).limit(1))).scalars().first()
+    if not comp:
+        raise HTTPException(status_code=404, detail="Profilo aziendale non trovato.")
+    if req.language:
+        lang = req.language.strip().upper()
+        if lang in ("EN", "IT"):
+            comp.language = lang
+    if req.currency:
+        curr = req.currency.strip().upper()
+        if curr in ("EUR", "USD"):
+            comp.currency = curr
+    await db.commit()
+    return {
+        "status": "success",
+        "language": comp.language or "EN",
+        "currency": comp.currency or "EUR",
+        "message": f"Preferenze aggiornate: {comp.language} | {comp.currency}"
+    }
 
 @router.post("/sync_xp12")
 async def sync_xp12_aircraft(req: SyncXP12Request, db: AsyncSession = Depends(get_db)):

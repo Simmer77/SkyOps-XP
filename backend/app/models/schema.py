@@ -17,6 +17,8 @@ class Company(Base):
     virtual_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     operating_day = Column(Integer, default=1)  # Legacy day counter
     operating_month = Column(String, default=lambda: datetime.now(timezone.utc).strftime("%Y-%m")) # "YYYY-MM" e.g. "2026-11"
+    language = Column(String, default="EN") # "EN" | "IT"
+    currency = Column(String, default="EUR") # "EUR" | "USD"
     simbrief_username = Column(String, nullable=True, default="")
     simbrief_pilot_id = Column(String, nullable=True, default="")
     xp12_install_path = Column(String, nullable=True, default="")
