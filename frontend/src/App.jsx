@@ -395,7 +395,7 @@ export default function App() {
   };
 
   const handleFireCrew = async (crewId) => {
-    if (!confirm('Vuoi chiudere il contratto mensile di questo equipaggio e tornare al regime freelance per volo?')) return;
+    if (!confirm(lang === 'it' ? 'Vuoi chiudere il contratto mensile di questo equipaggio e tornare al regime freelance per volo?' : 'Do you want to terminate this monthly crew contract and return to freelance on-demand?')) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/crew/${crewId}`, { method: 'DELETE' });
@@ -474,7 +474,7 @@ export default function App() {
   };
 
   const handleDeleteTour = async (tourId) => {
-    if (!confirm('Eliminare questo Tour? I voli effettuati resteranno salvati nel normale Logbook.')) return;
+    if (!confirm(lang === 'it' ? 'Eliminare questo Tour? I voli effettuati resteranno salvati nel normale Logbook.' : 'Delete this Tour? Flown legs will remain saved in the standard Logbook.')) return;
     try {
       const res = await fetch(`/api/tours/${tourId}`, { method: 'DELETE' });
       const data = await res.json();
@@ -503,7 +503,10 @@ export default function App() {
   const handlePayoffAircraftDebt = async (aircraft) => {
     if (!aircraft) return;
     const debt = aircraft.financed_amount_remaining_eur || 0;
-    if (!confirm(`Vuoi estinguere anticipatamente il debito residuo di ${formatEuro(debt)} per ${aircraft.tail_number} (${aircraft.name})?`)) {
+    const payoffMsg = lang === 'it'
+      ? `Vuoi estinguere anticipatamente il debito residuo di ${formatEuro(debt)} per ${aircraft.tail_number} (${aircraft.name})?`
+      : `Do you want to pay off the remaining debt of ${formatEuro(debt)} for ${aircraft.tail_number} (${aircraft.name})?`;
+    if (!confirm(payoffMsg)) {
       return;
     }
     setLoading(true);
@@ -578,7 +581,10 @@ export default function App() {
   };
 
   const handleResetProfile = async () => {
-    if (!confirm("⚠️ ATTENZIONE: Questa operazione cancellerà definitivamente il tuo profilo aziendale, tutta la flotta, i voli registrati e il bilancio economico riportando il sistema a ZERO.\n\nVuoi procedere?")) {
+    const resetMsg = lang === 'it'
+      ? "⚠️ ATTENZIONE: Questa operazione cancellerà definitivamente il tuo profilo aziendale, tutta la flotta, i voli registrati e il bilancio economico riportando il sistema a ZERO.\n\nVuoi procedere?"
+      : "⚠️ WARNING: This will permanently delete your airline profile, fleet, flight history and cash balance, resetting everything to ZERO.\n\nDo you want to proceed?";
+    if (!confirm(resetMsg)) {
       return;
     }
     setLoading(true);
@@ -910,8 +916,10 @@ export default function App() {
   // Action: Delete / Return Aircraft
   const handleDeleteAircraft = async (aircraft) => {
     const isLeased = aircraft.ownership === 'LEASED';
-    const actionText = isLeased ? 'restituire questo aereo a noleggio' : 'rimuovere questo aereo dall hangar';
-    if (!confirm(`Sei sicuro di voler ${actionText} (${aircraft.tail_number})?`)) return;
+    const actionText = isLeased
+      ? (lang === 'it' ? 'restituire questo aereo a noleggio' : 'return this leased aircraft')
+      : (lang === 'it' ? 'rimuovere questo aereo dall\'hangar' : 'remove this aircraft from the hangar');
+    if (!confirm(lang === 'it' ? `Sei sicuro di voler ${actionText} (${aircraft.tail_number})?` : `Are you sure you want to ${actionText} (${aircraft.tail_number})?`)) return;
 
     try {
       const res = await fetch(`/api/fleet/${aircraft.id}`, { method: 'DELETE' });
@@ -1115,7 +1123,10 @@ export default function App() {
   const handleStartFlight = async (jobId = null) => {
     if (!selectedAircraft) return;
     if (isModelMismatch && !jobId) {
-      if (!confirm(`⚠️ ATTENZIONE MODELLO DIVERSO!\n\nIn X-Plane 12 risulta caricato: ${xpAircraftIcao} (${xpAircraftTailnum || 'N/D'})\nIn SkyOps XP hai selezionato: ${selectedAircraft.tail_number} (${selectedAircraft.aircraft_type})\n\nVuoi avviare comunque il monitoraggio volo su ${selectedAircraft.tail_number}?`)) {
+      const mismatchMsg = lang === 'it'
+        ? `⚠️ ATTENZIONE MODELLO DIVERSO!\n\nIn X-Plane 12 risulta caricato: ${xpAircraftIcao} (${xpAircraftTailnum || 'N/D'})\nIn SkyOps XP hai selezionato: ${selectedAircraft.tail_number} (${selectedAircraft.aircraft_type})\n\nVuoi avviare comunque il monitoraggio volo su ${selectedAircraft.tail_number}?`
+        : `⚠️ AIRCRAFT MISMATCH WARNING!\n\nX-Plane 12 currently has loaded: ${xpAircraftIcao} (${xpAircraftTailnum || 'N/A'})\nIn SkyOps XP you have selected: ${selectedAircraft.tail_number} (${selectedAircraft.aircraft_type})\n\nDo you still want to start tracking this flight for ${selectedAircraft.tail_number}?`;
+      if (!confirm(mismatchMsg)) {
         return;
       }
     }
@@ -1160,11 +1171,10 @@ export default function App() {
     const maxKg = Number(targetAc.fuel_capacity_kg || 0).toFixed(0);
     const activeMode = (financialOverview?.economy_mode || systemStatus?.company?.economy_mode || 'REALISTIC').toUpperCase();
     const estPrice = activeMode === 'STANDARD' ? 1.05 : (targetAc.category === 'AIRLINER' ? 0.90 : targetAc.category === 'BIZJET' ? 1.25 : 1.35);
-    const targetInput = prompt(
-      `Carburante attuale salvato: ${currentKg} kg / Max ${maxKg} kg.\n` +
-      `Inserisci quantità totale desiderata in kg (pagherai SOLO la differenza aggiunta a ${estPrice.toFixed(2)} €/kg):`,
-      maxKg
-    );
+    const refuelPromptMsg = lang === 'it'
+      ? `Carburante attuale salvato: ${currentKg} kg / Max ${maxKg} kg.\nInserisci quantità totale desiderata in kg (pagherai SOLO la differenza aggiunta a ${estPrice.toFixed(2)} €/kg):`
+      : `Current saved fuel: ${currentKg} kg / Max ${maxKg} kg.\nEnter desired total fuel in kg (you pay ONLY for the added difference at ${formatEuro(estPrice)}/kg):`;
+    const targetInput = prompt(refuelPromptMsg, maxKg);
     if (!targetInput) return;
     const parsedTarget = parseFloat(targetInput);
     if (Number.isNaN(parsedTarget) || parsedTarget < 0) {
@@ -1427,7 +1437,7 @@ export default function App() {
 
             {/* 5 Capital / Difficulty Tiers */}
             <div>
-              <label className="text-slate-300 block mb-2 font-semibold">Capitale Iniziale & Livello di Progressione (€ Euro)</label>
+              <label className="text-slate-300 block mb-2 font-semibold">{lang === 'it' ? 'Capitale Iniziale & Livello di Progressione' : 'Starting Capital & Career Progression'}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {difficultyOptions.map((opt) => {
                   const selected = profileForm.difficulty_level === opt.id;
@@ -1457,7 +1467,7 @@ export default function App() {
             </div>
 
                     <div className="pt-2">
-                      <label className="text-slate-300 block mb-2 font-semibold">Modello Economico (Margini & Sfida):</label>
+                      <label className="text-slate-300 block mb-2 font-semibold">{lang === 'it' ? 'Modello Economico (Margini & Sfida):' : 'Economic Model (Margins & Challenge):'}</label>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                         {[
                           { id: 'REALISTIC', title: '🎯 REALISTICO (Consigliato)', desc: 'Margini reali aviazione (4%–12%), riserve motori/check-C, FBO/Ground Handling, Eurocontrol & IOC.' },
@@ -1698,14 +1708,14 @@ export default function App() {
           {/* Active Aircraft Quick Sidebar Card */}
           {selectedAircraft && (
             <div className="hidden lg:block glass-panel p-4 rounded-xl border border-slate-800 space-y-2 mt-4">
-              <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider">Aeromobile Selezionato</div>
+              <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider">{lang === 'it' ? 'Aeromobile Selezionato' : 'Selected Aircraft'}</div>
               <div className="flex items-center justify-between">
                 <span className="font-black font-mono text-cyan-300 text-base">{selectedAircraft.tail_number}</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-200">{selectedAircraft.aircraft_type}</span>
               </div>
               <div className="text-xs text-white font-semibold truncate" title={selectedAircraft.name}>{selectedAircraft.name}</div>
               <div className="text-xs font-mono text-slate-400 flex items-center gap-1 pt-1 border-t border-slate-800/80">
-                <MapPin size={13} className="text-rose-400" /> Base attuale: <strong className="text-white">{selectedAircraft.current_icao}</strong>
+                <MapPin size={13} className="text-rose-400" /> {lang === 'it' ? 'Base attuale:' : 'Current base:'} <strong className="text-white">{selectedAircraft.current_icao}</strong>
               </div>
             </div>
           )}
@@ -1724,12 +1734,12 @@ export default function App() {
                   <AlertTriangle size={22} className="text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <div className="text-sm font-bold text-amber-300 font-mono">
-                      MODELLO DIVERSO CARICATO IN X-PLANE 12!
+                      {t('mismatch_warning', 'MODELLO DIVERSO CARICATO IN X-PLANE 12!')}
                     </div>
                     <p className="text-xs text-slate-200 mt-0.5">
-                      Su X-Plane 12 stai pilotando un <strong className="text-white font-mono">{xpAircraftIcao}</strong>
-                      {xpAircraftTailnum ? <span className="text-amber-200 font-mono"> ({xpAircraftTailnum})</span> : ''}, 
-                      mentre in SkyOps XP è selezionato <strong className="text-white font-mono">{selectedAircraft?.tail_number} ({selectedAircraft?.aircraft_type})</strong>.
+                      {lang === 'it' ? 'Su X-Plane 12 stai pilotando un ' : 'In X-Plane 12 you are flying '}<strong className="text-white font-mono">{xpAircraftIcao}</strong>
+                      {xpAircraftTailnum ? <span className="text-amber-200 font-mono"> ({xpAircraftTailnum})</span> : ''}
+                      {lang === 'it' ? ', mentre in SkyOps XP è selezionato ' : ', while in SkyOps XP you have selected '}<strong className="text-white font-mono">{selectedAircraft?.tail_number} ({selectedAircraft?.aircraft_type})</strong>.
                     </p>
                   </div>
                 </div>
@@ -1742,14 +1752,14 @@ export default function App() {
                       }}
                       className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-mono font-bold text-xs px-3.5 py-2 rounded-lg shadow transition"
                     >
-                      Usa {matchingFleetAircraft.tail_number} ({matchingFleetAircraft.aircraft_type})
+                      {t('mismatch_use_btn', 'Usa')} {matchingFleetAircraft.tail_number} ({matchingFleetAircraft.aircraft_type})
                     </button>
                   ) : (
                     <button
                       onClick={() => setActiveTab('rental')}
                       className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 font-mono font-bold text-xs px-3.5 py-2 rounded-lg transition"
                     >
-                      Cerca {xpAircraftIcao} nel Mercato
+                      {lang === 'it' ? `Cerca ${xpAircraftIcao} nel Mercato` : `Find ${xpAircraftIcao} in Market`}
                     </button>
                   )}
                 </div>
@@ -1766,7 +1776,7 @@ export default function App() {
                       flightPhase === 'TOUCHDOWN' || flightPhase === 'TAXI_IN' || flightPhase === 'PARKED' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
                       'bg-slate-800 text-slate-300'
                     }`}>
-                      FASE: {flightPhase}
+                      {t('mission_phase', 'FASE')}: {flightPhase}
                     </span>
                     {fleet.length > 0 ? (
                       <select
@@ -1779,7 +1789,7 @@ export default function App() {
                       >
                         {fleet.map((ac) => (
                           <option key={ac.id} value={ac.id}>
-                            {ac.tail_number} ({ac.name}) {ac.ownership === 'LEASED' ? '[NOLEGGIO]' : ''}
+                            {ac.tail_number} ({ac.name}) {ac.ownership === 'LEASED' ? (lang === 'it' ? '[NOLEGGIO]' : '[LEASE]') : ''}
                           </option>
                         ))}
                       </select>
@@ -1788,12 +1798,12 @@ export default function App() {
                         onClick={() => setActiveTab('rental')}
                         className="text-xs font-mono text-cyan-300 hover:underline flex items-center gap-1"
                       >
-                        <Key size={13} /> Nessun aereo in flotta — Vai a Mercato & Noleggio
+                        <Key size={13} /> {t('mission_no_aircraft', 'Nessun aereo in flotta — Vai a Mercato & Noleggio')}
                       </button>
                     )}
                   </div>
                   <p className="text-xs text-slate-400 mt-1.5 font-mono">
-                    Posizione salvata: <strong className="text-white">{selectedAircraft?.current_icao || 'N/D'}</strong> | Carburante a bordo: {liveTelemetry.fuel_total_kg > 0 ? liveTelemetry.fuel_total_kg.toFixed(0) : selectedAircraft?.fuel_quantity_kg?.toFixed(0)} kg
+                    {t('mission_saved_location', 'Posizione salvata:')} <strong className="text-white">{selectedAircraft?.current_icao || 'N/D'}</strong> | {t('mission_fuel_onboard', 'Carburante a bordo:')} {liveTelemetry.fuel_total_kg > 0 ? liveTelemetry.fuel_total_kg.toFixed(0) : selectedAircraft?.fuel_quantity_kg?.toFixed(0)} kg
                   </p>
                 </div>
 
@@ -1819,13 +1829,13 @@ export default function App() {
                                 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200 hover:bg-emerald-900/40'
                                 : 'bg-indigo-950/40 border-indigo-500/40 text-indigo-200 hover:bg-indigo-900/40'
                           }`}
-                          title="Clicca per escludere/includere equipaggio (es. Volo Solo VFR)"
+                          title={lang === 'it' ? 'Clicca per escludere/includere equipaggio (es. Volo Solo VFR)' : 'Click to toggle crew inclusion (e.g. Solo VFR flight)'}
                         >
                           {isCrewExcluded
-                            ? '🧑‍✈️ Volo Solo (Equip. € 0)'
+                            ? t('mission_solo_flight', '🧑‍✈️ Volo Solo (Equip. € 0)')
                             : hasSalaried
-                              ? `👨‍✈️ Equip. Fisso (${crewSpec.label} • € 0/h)`
-                              : `👨‍✈️ Equipaggio: ${crewSpec.label} (€ ${crewSpec.hourly_rate_eur}/h)`}
+                              ? (lang === 'it' ? `👨‍✈️ Equip. Fisso (${crewSpec.label} • € 0/h)` : `👨‍✈️ Salaried Crew (${crewSpec.label} • $0/h)`)
+                              : (lang === 'it' ? `👨‍✈️ Equipaggio: ${crewSpec.label} (${formatEuro(crewSpec.hourly_rate_eur)}/h)` : `👨‍✈️ Crew: ${crewSpec.label} (${formatEuro(crewSpec.hourly_rate_eur)}/h)`)}
                         </button>
                         <button
                           type="button"
@@ -1835,9 +1845,9 @@ export default function App() {
                               ? 'bg-sky-950/40 border-sky-400/50 text-sky-300 hover:bg-sky-900/40'
                               : 'bg-slate-800/80 border-slate-700 text-cyan-300 hover:bg-slate-700'
                           }`}
-                          title="IFR paga tariffe ANSP/Sorvolo (Eurocontrol, NAV CANADA, ecc.; USA FAA esente) & Handling Pax; VFR è esente"
+                          title={lang === 'it' ? 'IFR paga tariffe ANSP/Sorvolo & Handling Pax; VFR è esente' : 'IFR applies regional ANSP fees & pax handling; VFR is exempt'}
                         >
-                          {effRules === 'VFR' ? '🌤️ VFR (Esente ANSP)' : '🛫 IFR (Sorvolo & ANSP)'}
+                          {effRules === 'VFR' ? (lang === 'it' ? '🌤️ VFR (Esente ANSP)' : '🌤️ VFR (ANSP Exempt)') : (lang === 'it' ? '🛫 IFR (Sorvolo & ANSP)' : '🛫 IFR (Overflight & ANSP)')}
                         </button>
                         {toursList.length > 0 && (
                           <select
@@ -1846,7 +1856,7 @@ export default function App() {
                             className="bg-slate-900 border border-slate-700 text-amber-300 font-mono text-xs font-semibold px-2.5 py-2 rounded-lg focus:outline-none focus:border-amber-400"
                             title="Associa questo volo a un Tour IVAO"
                           >
-                            <option value="">🗺️ Nessun Tour</option>
+                            <option value="">{t('mission_no_tour', '🗺️ Nessun Tour')}</option>
                             {toursList.map((tr) => (
                               <option key={tr.id} value={String(tr.id)}>
                                 🗺️ {tr.name}
@@ -1861,9 +1871,9 @@ export default function App() {
                     <button
                       onClick={handleRefuelAircraft}
                       className="flex items-center gap-2 font-semibold px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition text-sm"
-                      title="Rifornisci il serbatoio pagando solo i kg aggiunti (1,75 €/kg)"
+                      title={t('mission_btn_refuel_tooltip', 'Rifornisci il serbatoio pagando solo i kg aggiunti')}
                     >
-                      <Fuel size={15} /> Rifornisci
+                      <Fuel size={15} /> {t('btn_refuel', 'Rifornisci')}
                     </button>
                   )}
                   {flightPhase === 'OFFLINE' ? (
@@ -1876,7 +1886,7 @@ export default function App() {
                           : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
                       }`}
                     >
-                      <Zap size={16} /> Avvia Monitoraggio Volo
+                      <Zap size={16} /> {t('mission_btn_start', 'Avvia Monitoraggio Volo')}
                     </button>
                   ) : (
                     <button
@@ -1888,7 +1898,7 @@ export default function App() {
                           : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
                       }`}
                     >
-                      <CheckCircle size={16} /> Concludi Volo & Registra Bilancio
+                      <CheckCircle size={16} /> {t('mission_btn_finish', 'Concludi Volo & Registra Bilancio')}
                     </button>
                   )}
                 </div>
@@ -1901,7 +1911,7 @@ export default function App() {
                     <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
                       activeFlight.job.reward_usd > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-700 text-slate-300'
                     }`}>
-                      {activeFlight.job.reward_usd > 0 ? 'COMMERCIALE' : 'PERSONALE / FERRY'}
+                      {activeFlight.job.reward_usd > 0 ? t('mission_commercial_badge', 'COMMERCIALE') : t('mission_ferry_badge', 'PERSONALE / FERRY')}
                     </span>
                     <div>
                       <span className="font-bold text-white text-sm">{activeFlight.job.origin_icao} ➔ {activeFlight.job.destination_icao}</span>
@@ -1909,20 +1919,20 @@ export default function App() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className="text-slate-400">Ricavo Previsto: </span>
+                    <span className="text-slate-400">{t('mission_expected_rev', 'Ricavo Previsto:')} </span>
                     <span className={`font-bold text-sm ${activeFlight.job.reward_usd > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
-                      {activeFlight.job.reward_usd > 0 ? formatEuro(activeFlight.job.reward_usd) : '€ 0,00 (Solo Costi)'}
+                      {activeFlight.job.reward_usd > 0 ? formatEuro(activeFlight.job.reward_usd) : t('mission_costs_only', '€ 0,00 (Solo Costi)')}
                     </span>
                   </div>
                 </div>
               ) : (
                 <div className="bg-slate-900/50 p-3 rounded-lg border border-dashed border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
-                  <span className="text-slate-400">Nessun piano di volo attivo assegnato a {selectedAircraft?.tail_number}.</span>
+                  <span className="text-slate-400">{lang === 'it' ? `Nessun piano di volo attivo assegnato a ${selectedAircraft?.tail_number}.` : `No active flight plan assigned to ${selectedAircraft?.tail_number}.`}</span>
                   <button
                     onClick={() => setActiveTab('simbrief')}
                     className="text-cyan-400 hover:underline font-bold"
                   >
-                    + Pianifica Volo (SimBrief o Manuale)
+                    {t('mission_btn_plan', '+ Pianifica Volo (SimBrief o Manuale)')}
                   </button>
                 </div>
               )}
@@ -1939,21 +1949,21 @@ export default function App() {
                   const atOrigin = fc?.at_origin ?? false;
                   return (
                     <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800 space-y-2 font-mono text-[11px]">
-                      <div className="text-slate-400 font-bold uppercase tracking-wider">Controlli Pre-Volo Obbligatori per l'Avvio:</div>
+                      <div className="text-slate-400 font-bold uppercase tracking-wider">{t('check_preflight_title')}</div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${xpConnected ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-rose-950/30 border-rose-500/30 text-rose-300'}`}>
                           {xpConnected ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-                          <span>XP12: {xpConnected ? 'Connesso' : 'Disconnesso'}</span>
+                          <span>XP12: {xpConnected ? t('check_connected', 'Connesso') : t('check_disconnected', 'Disconnesso')}</span>
                         </div>
                         <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${atOrigin && xpConnected ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-rose-950/30 border-rose-500/30 text-rose-300'}`}>
                           {atOrigin && xpConnected ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
                           <span>
-                            Su {originCode}: {dist !== null && dist !== undefined ? (dist <= 5 ? `OK (${dist} NM)` : `Distante ${dist} NM!`) : (xpConnected ? 'OK' : 'N/D')}
+                            {t('check_on_origin', 'Su')} {originCode}: {dist !== null && dist !== undefined ? (dist <= 5 ? `OK (${dist} NM)` : `${t('check_distant', 'Distante')} ${dist} NM!`) : (xpConnected ? 'OK' : 'N/D')}
                           </span>
                         </div>
                         <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${brakeOn && stoppedOnGround ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'}`}>
                           {brakeOn && stoppedOnGround ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-                          <span>Freni Parcheggio: {brakeOn ? 'INSERITI' : 'DISINSERITI'}</span>
+                          <span>{brakeOn ? t('gauge_brake_set', 'Freni Parcheggio: INSERITI') : t('gauge_brake_rel', 'Freni Parcheggio: DISINSERITI')}</span>
                         </div>
                       </div>
                     </div>
@@ -1967,29 +1977,29 @@ export default function App() {
                 return (
                   <div className="bg-slate-950/70 p-3.5 rounded-lg border border-slate-800 space-y-3 font-mono text-[11px]">
                     <div className="flex flex-wrap justify-between items-center gap-2">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider">Controlli Chiusura & Parcheggio Finale:</span>
+                      <span className="text-slate-400 font-bold uppercase tracking-wider">{t('check_postflight_title')}</span>
                       <button
                         type="button"
                         onClick={() => setShowDiversionPanel(!showDiversionPanel)}
                         className="text-amber-300 hover:text-amber-200 underline text-[11px]"
                       >
-                        {showDiversionPanel ? 'Nascondi Dirottamento / Alternato' : '⚠️ Emergenza o Atterraggio ad Alternato?'}
+                        {showDiversionPanel ? t('btn_diversion_hide', 'Nascondi Dirottamento / Alternato') : t('btn_diversion_toggle', '⚠️ Emergenza o Atterraggio ad Alternato?')}
                       </button>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${stoppedOnGround ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'}`}>
                         {stoppedOnGround ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-                        <span>Assetto: {stoppedOnGround ? 'Fermo a terra' : 'In volo / Movimento'}</span>
+                        <span>{stoppedOnGround ? t('check_stopped', 'Assetto: Fermo a terra') : t('check_moving', 'Assetto: In volo / Movimento')}</span>
                       </div>
                       <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${brakeOn ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'}`}>
                         {brakeOn ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-                        <span>Freni Parcheggio: {brakeOn ? 'INSERITI' : 'DISINSERITI'}</span>
+                        <span>{brakeOn ? t('gauge_brake_set', 'Freni Parcheggio: INSERITI') : t('gauge_brake_rel', 'Freni Parcheggio: DISINSERITI')}</span>
                       </div>
                       <div className={`px-2.5 py-1.5 rounded border flex items-center gap-2 ${atDest && xpConnected ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : 'bg-rose-950/30 border-rose-500/30 text-rose-300'}`}>
                         {atDest && xpConnected ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
                         <span>
-                          Arrivo {targetCode}: {destDist !== null && destDist !== undefined ? (destDist <= 5 ? `OK (${destDist} NM)` : `Distante ${destDist} NM!`) : (xpConnected ? 'OK' : 'N/D')}
+                          {t('check_arrival_ok', 'Arrivo')} {targetCode}: {destDist !== null && destDist !== undefined ? (destDist <= 5 ? `OK (${destDist} NM)` : `${t('check_distant', 'Distante')} ${destDist} NM!`) : (xpConnected ? 'OK' : 'N/D')}
                         </span>
                       </div>
                     </div>
@@ -1997,7 +2007,7 @@ export default function App() {
                     {showDiversionPanel && (
                       <div className="bg-amber-950/20 border border-amber-500/30 p-3 rounded-lg grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                         <div>
-                          <label className="text-amber-300 block mb-1 font-semibold">ICAO Arrivo Effettivo (Alternato)</label>
+                          <label className="text-amber-300 block mb-1 font-semibold">{t('diversion_icao_label')}</label>
                           <input
                             type="text"
                             maxLength={4}
@@ -2008,7 +2018,7 @@ export default function App() {
                           />
                         </div>
                         <div className="sm:col-span-2">
-                          <label className="text-slate-300 block mb-1">Motivo Dirottamento / Emergenza (Opzionale)</label>
+                          <label className="text-slate-300 block mb-1">{t('diversion_reason_label')}</label>
                           <input
                             type="text"
                             placeholder="es. Meteo avverso / Emergenza tecnica / Pista chiusa"
@@ -2034,10 +2044,10 @@ export default function App() {
                     </div>
                     <div>
                       <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                        Riepilogo Fine Volo & Registrazione Bilancio
+                        {t('debrief_title', 'Riepilogo Fine Volo & Registrazione Bilancio')}
                       </h3>
                       <p className="text-xs text-slate-300 font-mono">
-                        Volo <strong className="text-cyan-300">{lastFlightSummary.flight_number}</strong> • {lastFlightSummary.tail_number} ({lastFlightSummary.aircraft_name}) • Rotta: <strong className="text-white">{lastFlightSummary.origin_icao} ➔ {lastFlightSummary.destination_icao}</strong>
+                        {lang === 'it' ? 'Volo' : 'Flight'} <strong className="text-cyan-300">{lastFlightSummary.flight_number}</strong> • {lastFlightSummary.tail_number} ({lastFlightSummary.aircraft_name}) • {lang === 'it' ? 'Rotta:' : 'Route:'} <strong className="text-white">{lastFlightSummary.origin_icao} ➔ {lastFlightSummary.destination_icao}</strong>
                       </p>
                     </div>
                   </div>
@@ -2046,13 +2056,13 @@ export default function App() {
                       onClick={() => setActiveTab('finances')}
                       className="px-3.5 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-bold text-xs transition"
                     >
-                      Apri Bilancio & Libro Mastro
+                      {t('btn_open_ledger', 'Apri Bilancio & Libro Mastro')}
                     </button>
                     <button
                       onClick={() => setLastFlightSummary(null)}
                       className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs transition"
                     >
-                      ✕ Chiudi
+                      {t('btn_close', '✕ Chiudi')}
                     </button>
                   </div>
                 </div>
@@ -2066,30 +2076,30 @@ export default function App() {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 font-mono text-xs">
                   {/* Column 1: Flight Metrics & Touchdown */}
                   <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2.5">
-                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">Dati di Volo & Atterraggio</div>
+                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">{t('debrief_col_flight_data')}</div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Durata Volo (Block Time):</span>
+                      <span className="text-slate-400">{t('doc_block_time')}</span>
                       <span className="text-white font-bold">{lastFlightSummary.duration_min} min</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Carburante Consumato:</span>
+                      <span className="text-slate-400">{t('doc_fuel_burned')}</span>
                       <span className="text-purple-300 font-bold">{lastFlightSummary.fuel_used_kg} kg</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Rateo Touchdown:</span>
+                      <span className="text-slate-400">{t('doc_touchdown_rate')}</span>
                       <span className="text-cyan-300 font-bold">
                         {lastFlightSummary.touchdown?.fpm !== null && lastFlightSummary.touchdown?.fpm !== undefined ? `${lastFlightSummary.touchdown.fpm} fpm` : 'N/D'}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Impatto G-Force:</span>
+                      <span className="text-slate-400">{t('doc_g_impact')}</span>
                       <span className="text-amber-300 font-bold">
                         {lastFlightSummary.touchdown?.g ? `${lastFlightSummary.touchdown.g} G` : 'N/D'} ({lastFlightSummary.touchdown?.rating || 'OK'})
                       </span>
                     </div>
                     {lastFlightSummary.reputation && (
                       <div className="flex justify-between pt-1 border-t border-slate-800/80">
-                        <span className="text-slate-400">Reputazione Azienda:</span>
+                        <span className="text-slate-400">{t('doc_company_rep')}</span>
                         <span className={`font-bold ${lastFlightSummary.reputation.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {lastFlightSummary.reputation.new}% ({lastFlightSummary.reputation.delta >= 0 ? '+' : ''}{lastFlightSummary.reputation.delta}%)
                         </span>
@@ -2100,28 +2110,28 @@ export default function App() {
                   {/* Column 2: Economic Breakdown */}
                   <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
                     <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5 flex justify-between">
-                      <span>Conto Economico del Volo</span>
+                      <span>{t('debrief_col_pnl')}</span>
                       <span className="text-cyan-400">{lastFlightSummary.flight_rules || 'IFR'}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-emerald-400">(+) Ricavo Lordo Volo:</span>
+                      <span className="text-emerald-400">{t('doc_gross_revenue')}</span>
                       <span className="text-emerald-400 font-bold">+{formatEuro(lastFlightSummary.financials?.gross_revenue)}</span>
                     </div>
                     {lastFlightSummary.financials?.reputation_bonus_eur !== 0 && lastFlightSummary.financials?.reputation_bonus_eur !== undefined && (
                       <div className="flex justify-between text-[11px] pl-2">
-                        <span className="text-slate-400">di cui Bonus/Malus Qualità ({lastFlightSummary.financials?.reputation_bonus_pct > 0 ? '+' : ''}{lastFlightSummary.financials?.reputation_bonus_pct}%):</span>
+                        <span className="text-slate-400">{lang === 'it' ? 'di cui Bonus/Malus Qualità' : 'incl. Quality Bonus/Penalty'} ({lastFlightSummary.financials?.reputation_bonus_pct > 0 ? '+' : ''}{lastFlightSummary.financials?.reputation_bonus_pct}%):</span>
                         <span className={lastFlightSummary.financials.reputation_bonus_eur >= 0 ? 'text-emerald-300' : 'text-amber-300'}>
                           {lastFlightSummary.financials.reputation_bonus_eur >= 0 ? '+' : ''}{formatEuro(lastFlightSummary.financials.reputation_bonus_eur)}
                         </span>
                       </div>
                     )}
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Carburante Bruciato:</span>
-                      <span className="text-slate-300 font-mono text-[11px]">Già pagato al rifornimento (€ 0,00)</span>
+                      <span className="text-slate-400">{t('doc_fuel_burned')}</span>
+                      <span className="text-slate-300 font-mono text-[11px]">{t('doc_fuel_already_paid')}</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-slate-400 flex items-center gap-1.5">
-                        (-) Tassa Atterraggio:
+                        {t('doc_landing_fee')}
                         {lastFlightSummary.financials?.is_home_base && (
                           <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">
                             BASE -{lastFlightSummary.financials?.landing_fee_discount_pct}%
@@ -2132,45 +2142,45 @@ export default function App() {
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-slate-400">
-                        (-) Navigazione & Sorvolo ({lastFlightSummary.financials?.nav_agency || 'ANSP'}):
+                        {t('doc_navigation_fee')} ({lastFlightSummary.financials?.nav_agency || 'ANSP'}):
                       </span>
                       <span className={lastFlightSummary.financials?.nav_fee > 0 ? 'text-rose-400' : 'text-slate-400'}>
                         {lastFlightSummary.financials?.nav_fee > 0
                           ? `-${formatEuro(lastFlightSummary.financials.nav_fee)}`
                           : (lastFlightSummary.financials?.nav_exempt_reason === 'FAA_US_DOMESTIC' || lastFlightSummary.financials?.nav_exempt_reason === 'EXTRA_EU')
-                            ? '€ 0,00 (FAA USA Esente)'
+                            ? `${formatEuro(0)} (${t('doc_exempt_faa')})`
                             : lastFlightSummary.financials?.nav_exempt_reason === 'MTOW_UNDER_2T'
-                              ? '€ 0,00 (< 2t Esente)'
-                              : '€ 0,00 (Esente VFR)'}
+                              ? `${formatEuro(0)} (${t('doc_exempt_under2t')})`
+                              : `${formatEuro(0)} (${t('doc_exempt_vfr')})`}
                       </span>
                     </div>
                     {lastFlightSummary.financials?.handling_fee > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-slate-400">(-) FBO / Ground Handling & Pax:</span>
+                        <span className="text-slate-400">{t('doc_ground_handling')}</span>
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.handling_fee)}</span>
                       </div>
                     )}
                     {lastFlightSummary.financials?.maint_reserve_cost > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-slate-400">(-) Riserva Manutenzione (Ore):</span>
+                        <span className="text-slate-400">{t('doc_maint_reserve')}</span>
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.maint_reserve_cost)}</span>
                       </div>
                     )}
                     {lastFlightSummary.financials?.ioc_cost > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-slate-400">(-) Costi Indiretti (GDS/Broker/OCC):</span>
+                        <span className="text-slate-400">{t('doc_indirect_costs')}</span>
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.ioc_cost)}</span>
                       </div>
                     )}
                     {lastFlightSummary.financials?.lease_cost > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-slate-400">(-) Canone Noleggio Orario:</span>
+                        <span className="text-slate-400">{t('doc_hourly_lease')}</span>
                         <span className="text-rose-400">-{formatEuro(lastFlightSummary.financials.lease_cost)}</span>
                       </div>
                     )}
                     <div className="flex justify-between items-center">
                       <span className="text-slate-400 flex items-center gap-1.5">
-                        (-) Equipaggio ({lastFlightSummary.financials?.crew_label || 'Piloti/A.V.'}):
+                        {t('doc_crew_cost')} ({lastFlightSummary.financials?.crew_label || (lang === 'it' ? 'Piloti/A.V.' : 'Pilots/Crew')}):
                         {lastFlightSummary.financials?.crew_source === 'SOLO_VFR' && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">SOLO</span>
                         )}
@@ -2184,43 +2194,43 @@ export default function App() {
                     </div>
                     {lastFlightSummary.financials?.penalty_eur > 0 && (
                       <div className="flex justify-between text-rose-300 font-bold">
-                        <span>(-) Penale / Risarcimento Touchdown:</span>
+                        <span>{t('doc_penalty_hard_landing')}</span>
                         <span>-{formatEuro(lastFlightSummary.financials.penalty_eur)}</span>
                       </div>
                     )}
                     <div className="flex justify-between border-t border-slate-800 pt-2 font-bold text-sm">
-                      <span className="text-white">(=) Utile Netto Volo:</span>
+                      <span className="text-white">{t('doc_net_profit')}</span>
                       <span className={lastFlightSummary.financials?.net_profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                         {lastFlightSummary.financials?.net_profit >= 0 ? '+' : ''}{formatEuro(lastFlightSummary.financials?.net_profit)}
                       </span>
                     </div>
                     <div className="flex justify-between text-[11px] pt-1 text-slate-400">
-                      <span>Nuovo Saldo Cassa:</span>
+                      <span>{t('doc_new_cash_balance')}</span>
                       <span className="text-emerald-300 font-bold">{formatEuro(lastFlightSummary.new_cash_balance)}</span>
                     </div>
                   </div>
 
                   {/* Column 3: Component Wear Applied */}
                   <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 space-y-2">
-                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">Usura Applicata alle Componenti</div>
+                    <div className="text-slate-400 font-bold uppercase border-b border-slate-800 pb-1.5">{t('debrief_col_wear')}</div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Motore / Propulsori:</span>
+                      <span className="text-slate-400">{t('wear_engine')}</span>
                       <span className="text-amber-300">-{lastFlightSummary.wear?.engine?.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Cellula & Struttura:</span>
+                      <span className="text-slate-400">{t('wear_airframe')}</span>
                       <span className="text-amber-300">-{lastFlightSummary.wear?.airframe?.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Pneumatici Carrello:</span>
+                      <span className="text-slate-400">{t('wear_tires')}</span>
                       <span className="text-amber-300">-{lastFlightSummary.wear?.tires?.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Impianto Frenante:</span>
+                      <span className="text-slate-400">{t('wear_brakes')}</span>
                       <span className="text-amber-300">-{lastFlightSummary.wear?.brakes?.toFixed(2)}%</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Avionica & Sensori:</span>
+                      <span className="text-slate-400">{t('wear_avionics')}</span>
                       <span className="text-amber-300">-{lastFlightSummary.wear?.avionics?.toFixed(2)}%</span>
                     </div>
                   </div>
@@ -2231,7 +2241,7 @@ export default function App() {
             {/* Glass Cockpit Gauges Grid (unchanged flight gauge sizing) */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 hud-gauges">
               <div className="glass-panel p-4 rounded-xl border border-slate-800/80">
-                <div className="text-xs text-slate-400 font-mono uppercase">Velocità Indicata (IAS)</div>
+                <div className="text-xs text-slate-400 font-mono uppercase">{t('gauge_ias')}</div>
                 <div className="text-3xl font-black font-mono text-cyan-400 mt-1">
                   {liveTelemetry.ias_kts.toFixed(0)} <span className="text-sm font-normal text-slate-400">kts</span>
                 </div>
@@ -2241,7 +2251,7 @@ export default function App() {
               </div>
 
               <div className="glass-panel p-4 rounded-xl border border-slate-800/80">
-                <div className="text-xs text-slate-400 font-mono uppercase">Altitudine</div>
+                <div className="text-xs text-slate-400 font-mono uppercase">{t('gauge_altitude')}</div>
                 <div className="text-3xl font-black font-mono text-emerald-400 mt-1">
                   {(liveTelemetry.elevation_m * 3.28084).toFixed(0)} <span className="text-sm font-normal text-slate-400">ft</span>
                 </div>
@@ -2251,7 +2261,7 @@ export default function App() {
               </div>
 
               <div className="glass-panel p-4 rounded-xl border border-slate-800/80">
-                <div className="text-xs text-slate-400 font-mono uppercase">Carico G</div>
+                <div className="text-xs text-slate-400 font-mono uppercase">{t('gauge_gload')}</div>
                 <div className="text-3xl font-black font-mono text-amber-400 mt-1">
                   {liveTelemetry.g_force.toFixed(2)} <span className="text-sm font-normal text-slate-400">G</span>
                 </div>
@@ -2261,12 +2271,12 @@ export default function App() {
               </div>
 
               <div className="glass-panel p-4 rounded-xl border border-slate-800/80">
-                <div className="text-xs text-slate-400 font-mono uppercase">Carburante Residuo</div>
+                <div className="text-xs text-slate-400 font-mono uppercase">{t('gauge_fuel')}</div>
                 <div className="text-3xl font-black font-mono text-purple-400 mt-1">
                   {liveTelemetry.fuel_total_kg.toFixed(0)} <span className="text-sm font-normal text-slate-400">kg</span>
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-1">
-                  Freno Parcheggio: {liveTelemetry.parking_brake > 0.5 ? 'ATTIVO' : 'RILASCIATO'}
+                  {liveTelemetry.parking_brake > 0.5 ? t('gauge_brake_set') : t('gauge_brake_rel')}
                 </div>
               </div>
             </div>
@@ -2279,19 +2289,19 @@ export default function App() {
                     <Award size={24} />
                   </div>
                   <div>
-                    <div className="text-xs font-mono uppercase text-emerald-400">Analisi Contatto Pista</div>
+                    <div className="text-xs font-mono uppercase text-emerald-400">{lang === 'it' ? 'Analisi Contatto Pista' : 'Touchdown Analysis'}</div>
                     <div className="text-lg font-bold text-white">
-                      Giudizio: <span className="text-emerald-300 font-mono">{activeFlight.touchdown_rating || 'OTTIMO'}</span>
+                      {lang === 'it' ? 'Giudizio:' : 'Rating:'} <span className="text-emerald-300 font-mono">{activeFlight.touchdown_rating || 'OTTIMO'}</span>
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-6 text-right font-mono">
                   <div>
-                    <div className="text-xs text-slate-400">Rateo di Discesa</div>
+                    <div className="text-xs text-slate-400">{lang === 'it' ? 'Rateo di Discesa' : 'Descent Rate'}</div>
                     <div className="text-base font-bold text-cyan-300">{activeFlight.touchdown_fpm} fpm</div>
                   </div>
                   <div>
-                    <div className="text-xs text-slate-400">G-Force Touchdown</div>
+                    <div className="text-xs text-slate-400">{lang === 'it' ? 'G-Force Touchdown' : 'Touchdown G-Force'}</div>
                     <div className="text-base font-bold text-amber-300">{activeFlight.touchdown_g} G</div>
                   </div>
                 </div>
@@ -2313,17 +2323,17 @@ export default function App() {
             <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Plane size={22} className="text-cyan-400 rotate-45" /> Hangar Personale (Aerei di Proprietà)
+                  <Plane size={22} className="text-cyan-400 rotate-45" /> {t('hangar_title')}
                 </h2>
                 <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Scheda tecnica, cronistoria d'acquisto, motorizzazione e scadenziario manutenzioni per ogni velivolo.
+                  {lang === 'it' ? 'Scheda tecnica, cronistoria d\'acquisto, motorizzazione e scadenziario manutenzioni per ogni velivolo.' : 'Technical sheet, purchase history, powerplant specs and maintenance schedule.'}
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
                 {/* Aircraft Dropdown Selector */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-slate-400 uppercase font-semibold">Aereo:</span>
+                  <span className="text-xs font-mono text-slate-400 uppercase font-semibold">{lang === 'it' ? 'Aereo:' : 'Aircraft:'}</span>
                   <select
                     value={hangarAircraft?.id || ''}
                     onChange={(e) => {
@@ -2338,7 +2348,7 @@ export default function App() {
                       </option>
                     ))}
                     {ownedFleet.length === 0 && (
-                      <option value="">Nessun aereo presente</option>
+                      <option value="">{t('hangar_no_aircraft')}</option>
                     )}
                   </select>
                 </div>
@@ -2347,7 +2357,7 @@ export default function App() {
                   onClick={() => setShowAddModal(true)}
                   className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold font-mono text-xs px-3.5 py-2 rounded-lg shadow transition"
                 >
-                  <Plus size={15} /> Aggiungi Aereo
+                  <Plus size={15} /> {lang === 'it' ? 'Aggiungi Aereo' : 'Add Aircraft'}
                 </button>
 
                 {hangarAircraft && (
@@ -2356,11 +2366,11 @@ export default function App() {
                       onClick={() => openEditModal(hangarAircraft)}
                       className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold font-mono text-xs px-3.5 py-2 rounded-lg transition"
                     >
-                      <Edit3 size={14} className="text-amber-400" /> Modifica Dati & Foto
+                      <Edit3 size={14} className="text-amber-400" /> {lang === 'it' ? 'Modifica Dati & Foto' : 'Edit Specs & Photo'}
                     </button>
                     <button
                       onClick={() => handleDeleteAircraft(hangarAircraft)}
-                      title="Elimina dall hangar"
+                      title={lang === 'it' ? 'Elimina dall\'hangar' : 'Remove from Hangar'}
                       className="p-2 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 transition"
                     >
                       <Trash2 size={16} />
@@ -2397,7 +2407,7 @@ export default function App() {
                     </div>
 
                     <label className="absolute top-3 right-3 bg-slate-900/90 hover:bg-cyan-600 text-white px-3 py-1.5 rounded-lg backdrop-blur-md border border-slate-700 text-xs font-mono flex items-center gap-1.5 shadow transition cursor-pointer z-10">
-                      <Camera size={14} /> Carica Foto PC
+                      <Camera size={14} /> {t('hangar_upload_photo', 'Carica Foto PC')}
                       <input 
                         type="file" 
                         accept="image/*" 
@@ -2422,7 +2432,7 @@ export default function App() {
                         {(hangarAircraft.remaining_payments_months > 0 || hangarAircraft.financed_amount_remaining_eur > 0) ? (
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              {hangarAircraft.acquisition_mode === 'FINANCIAL_LEASE' ? 'LEASING FINANZIARIO' : 'MUTUO BANCARIO'} • {formatEuro(hangarAircraft.monthly_payment_eur || 0)}/mese ({hangarAircraft.remaining_payments_months || 0} mesi • Debito {formatEuro(hangarAircraft.financed_amount_remaining_eur || 0)})
+                              {hangarAircraft.acquisition_mode === 'FINANCIAL_LEASE' ? t('hangar_lease_fin') : t('hangar_lease_bank')} • {formatEuro(hangarAircraft.monthly_payment_eur || 0)}/mese ({hangarAircraft.remaining_payments_months || 0} mesi • Debito {formatEuro(hangarAircraft.financed_amount_remaining_eur || 0)})
                             </span>
                             <button
                               type="button"
@@ -2431,38 +2441,38 @@ export default function App() {
                               className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 transition disabled:opacity-50"
                               title="Salda subito l'intero capitale residuo e azzera le rate mensili"
                             >
-                              💳 Estingui Debito ({formatEuro(hangarAircraft.financed_amount_remaining_eur || 0)})
+                              💳 {t('hangar_btn_payoff', 'Estingui Debito')} ({formatEuro(hangarAircraft.financed_amount_remaining_eur || 0)})
                             </button>
                           </div>
                         ) : (
                           <span className="text-xs px-3 py-1 rounded-full font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            {hangarAircraft.ownership === 'LEASED' ? 'NOLEGGIO ORARIO' : 'DI PROPRIETÀ (CASH)'}
+                            {hangarAircraft.ownership === 'LEASED' ? t('hangar_status_leased') : t('hangar_status_owned')}
                           </span>
                         )}
                       </div>
 
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 font-mono text-xs">
                         <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
-                          <div className="text-slate-400">Anno Fabbricazione</div>
+                          <div className="text-slate-400">{t('hangar_year_manuf')}</div>
                           <div className="text-base font-bold text-white mt-0.5">{hangarAircraft.year_manufactured || 2021}</div>
                         </div>
 
                         <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
-                          <div className="text-slate-400">Data Acquisto</div>
+                          <div className="text-slate-400">{t('hangar_purchase_date')}</div>
                           <div className="text-base font-bold text-white mt-0.5">
                             {hangarAircraft.purchase_date ? new Date(hangarAircraft.purchase_date).toLocaleDateString() : 'N/D'}
                           </div>
                         </div>
 
                         <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
-                          <div className="text-slate-400">Valore di Acquisto</div>
+                          <div className="text-slate-400">{t('hangar_purchase_val')}</div>
                           <div className="text-base font-bold text-emerald-400 mt-0.5">
                             {formatEuro(hangarAircraft.purchase_price_eur || 0)}
                           </div>
                         </div>
 
                         <div className="bg-slate-900/80 p-3 rounded-lg border border-slate-800">
-                          <div className="text-slate-400">Aeroporto Base</div>
+                          <div className="text-slate-400">{t('hangar_base_airport')}</div>
                           <div className="text-base font-bold text-cyan-300 mt-0.5 flex items-center gap-1">
                             <MapPin size={14} className="text-rose-400" /> {hangarAircraft.current_icao}
                           </div>
@@ -2473,7 +2483,7 @@ export default function App() {
                     {/* Quick Fuel & Actions */}
                     <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
                       <div className="font-mono text-xs">
-                        <span className="text-slate-400">Carburante Attuale: </span>
+                        <span className="text-slate-400">{t('hangar_current_fuel')} </span>
                         <span className="text-purple-300 font-bold">{(hangarAircraft.fuel_quantity_kg || 0).toFixed(0)} kg</span>
                         <span className="text-slate-500"> / {(hangarAircraft.fuel_capacity_kg || 0).toFixed(0)} kg</span>
                       </div>
@@ -2483,13 +2493,13 @@ export default function App() {
                           onClick={() => handleSyncToXplane(hangarAircraft.id)}
                           className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 transition"
                         >
-                          <RefreshCw size={13} /> Sincronizza su XP12
+                          <RefreshCw size={13} /> {t('hangar_sync_xp12', 'Sincronizza su XP12')}
                         </button>
                         <button
                           onClick={() => handleRefuelAircraft(hangarAircraft)}
                           className="flex items-center gap-1.5 text-xs font-mono font-semibold px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 transition"
                         >
-                          <Fuel size={13} /> Rifornisci
+                          <Fuel size={13} /> {t('btn_refuel', 'Rifornisci')}
                         </button>
                       </div>
                     </div>
@@ -2501,29 +2511,29 @@ export default function App() {
                   {/* Card 1: Powerplant & Avionics */}
                   <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
                     <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
-                      <Cpu size={16} className="text-cyan-400" /> Propulsione & Avionica
+                      <Cpu size={16} className="text-cyan-400" /> {t('hangar_card_powerplant')}
                     </h3>
                     <div className="space-y-2 text-slate-300">
                       <div>
-                        <div className="text-slate-400 text-[11px]">Motorizzazione</div>
+                        <div className="text-slate-400 text-[11px]">{t('hangar_engine_type')}</div>
                         <div className="font-bold text-white">{hangarAircraft.engine_type || 'Standard Turbofan/Piston'}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-[11px]">Suite Avionica</div>
+                        <div className="text-slate-400 text-[11px]">{t('hangar_avionics_suite')}</div>
                         <div className="font-bold text-white">{hangarAircraft.avionics_system || 'Standard Flight Deck'}</div>
                       </div>
                       <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
                         <div>
-                          <div className="text-slate-400">Ore Cellula:</div>
+                          <div className="text-slate-400">{t('hangar_airframe_hours')}</div>
                           <div className="font-bold text-cyan-300 text-sm">{(hangarAircraft.airframe_hours || 0).toFixed(1)} h</div>
                         </div>
                         <div>
-                          <div className="text-slate-400">Ore Motore:</div>
+                          <div className="text-slate-400">{t('hangar_engine_hours')}</div>
                           <div className="font-bold text-emerald-300 text-sm">{(hangarAircraft.engine_hours || 0).toFixed(1)} h</div>
                         </div>
                       </div>
                       <div className="pt-2 text-[11px] text-slate-400">
-                        Ore residue al TBO Motore: <span className="text-amber-300 font-bold">{((hangarAircraft.tbo_hours || 3500) - (hangarAircraft.engine_hours || 0)).toFixed(1)} h</span>
+                        {t('hangar_tbo_remaining')} <span className="text-amber-300 font-bold">{((hangarAircraft.tbo_hours || 3500) - (hangarAircraft.engine_hours || 0)).toFixed(1)} h</span>
                       </div>
                     </div>
                   </div>
@@ -2531,15 +2541,15 @@ export default function App() {
                   {/* Card 2: Maintenance Deadlines */}
                   <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
                     <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
-                      <Calendar size={16} className="text-amber-400" /> Scadenziario Manutenzioni
+                      <Calendar size={16} className="text-amber-400" /> {t('hangar_card_maint')}
                     </h3>
                     
                     {/* 50h check */}
                     <div className="space-y-1">
                       <div className="flex justify-between text-slate-300">
-                        <span>Tagliando 50 Ore (Olio):</span>
+                        <span>{t('hangar_check_50h')}</span>
                         <span className="font-bold text-white">
-                          {Math.max(0, (hangarAircraft.next_50h_inspection_hours || 50) - (hangarAircraft.airframe_hours || 0)).toFixed(1)} h rimaste
+                          {Math.max(0, (hangarAircraft.next_50h_inspection_hours || 50) - (hangarAircraft.airframe_hours || 0)).toFixed(1)} {t('hangar_remaining_hours', 'h rimaste')}
                         </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-1.5">
@@ -2553,9 +2563,9 @@ export default function App() {
                     {/* 100h check */}
                     <div className="space-y-1 pt-1">
                       <div className="flex justify-between text-slate-300">
-                        <span>Ispezione 100 Ore:</span>
+                        <span>{t('hangar_check_100h')}</span>
                         <span className="font-bold text-white">
-                          {Math.max(0, (hangarAircraft.next_100h_inspection_hours || 100) - (hangarAircraft.airframe_hours || 0)).toFixed(1)} h rimaste
+                          {Math.max(0, (hangarAircraft.next_100h_inspection_hours || 100) - (hangarAircraft.airframe_hours || 0)).toFixed(1)} {t('hangar_remaining_hours', 'h rimaste')}
                         </span>
                       </div>
                       <div className="w-full bg-slate-800 rounded-full h-1.5">
@@ -2568,9 +2578,9 @@ export default function App() {
 
                     {/* Annual check */}
                     <div className="pt-2 border-t border-slate-800/80">
-                      <div className="text-slate-400 text-[11px]">Scadenza Ispezione Annuale Certificata:</div>
+                      <div className="text-slate-400 text-[11px]">{t('hangar_check_annual')}</div>
                       <div className="text-emerald-400 font-bold text-sm mt-0.5">
-                        {hangarAircraft.next_annual_inspection ? new Date(hangarAircraft.next_annual_inspection).toLocaleDateString() : 'Valida (12 Mesi)'}
+                        {hangarAircraft.next_annual_inspection ? new Date(hangarAircraft.next_annual_inspection).toLocaleDateString() : (lang === 'it' ? 'Valida (12 Mesi)' : 'Valid (12 Months)')}
                       </div>
                     </div>
                   </div>
@@ -2578,14 +2588,14 @@ export default function App() {
                   {/* Card 3: Health Overview */}
                   <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
                     <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-800 pb-2">
-                      <Wrench size={16} className="text-emerald-400" /> Integrità Componenti
+                      <Wrench size={16} className="text-emerald-400" /> {t('hangar_card_health')}
                     </h3>
                     <div className="space-y-2">
                       {[
-                        { label: 'Motore', pct: hangarAircraft.health_engine_pct ?? 100 },
-                        { label: 'Freni & Pastiglie', pct: hangarAircraft.health_brakes_pct ?? 100 },
-                        { label: 'Pneumatici', pct: hangarAircraft.health_tires_pct ?? 100 },
-                        { label: 'Struttura Cellula', pct: hangarAircraft.health_airframe_pct ?? 100 },
+                        { label: t('hangar_health_engine'), pct: hangarAircraft.health_engine_pct ?? 100 },
+                        { label: t('hangar_health_brakes'), pct: hangarAircraft.health_brakes_pct ?? 100 },
+                        { label: t('hangar_health_tires'), pct: hangarAircraft.health_tires_pct ?? 100 },
+                        { label: t('hangar_health_airframe'), pct: hangarAircraft.health_airframe_pct ?? 100 },
                       ].map((item, idx) => (
                         <div key={idx}>
                           <div className="flex justify-between text-[11px] text-slate-300 mb-0.5">
@@ -2606,19 +2616,19 @@ export default function App() {
               </div>
             ) : (
               <div className="text-center py-16 glass-panel rounded-xl border border-dashed border-slate-800 space-y-4">
-                <p className="text-slate-400 font-mono text-sm">Nessun aereo di proprietà selezionato o presente nell'hangar.</p>
+                <p className="text-slate-400 font-mono text-sm">{t('hangar_no_aircraft')}</p>
                 <div className="flex flex-wrap justify-center gap-3">
                   <button
                     onClick={() => setActiveTab('rental')}
                     className="bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-bold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 transition"
                   >
-                    <Key size={14} /> Vai al Mercato & Noleggio (XP12)
+                    <Key size={14} /> {t('hangar_btn_goto_market')}
                   </button>
                   <button
                     onClick={() => setShowAddModal(true)}
                     className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-mono text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 transition"
                   >
-                    <Plus size={14} /> Inserisci Manualmente
+                    <Plus size={14} /> {t('hangar_btn_add_manual')}
                   </button>
                 </div>
               </div>
@@ -2630,7 +2640,7 @@ export default function App() {
                 <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 className="text-base font-bold text-white flex items-center gap-2">
-                      <Edit3 size={18} className="text-cyan-400" /> Modifica Dati Velivolo ({selectedAircraft.tail_number})
+                      <Edit3 size={18} className="text-cyan-400" /> {lang === 'it' ? `Modifica Dati Velivolo (${selectedAircraft.tail_number})` : `Edit Aircraft Specs (${selectedAircraft.tail_number})`}
                     </h3>
                     <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-white">✕</button>
                   </div>
@@ -2638,7 +2648,7 @@ export default function App() {
                   <form onSubmit={handleUpdateAircraft} noValidate className="space-y-3 font-mono text-xs">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Marche / Registrazione (Tail Number)*</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Marche / Registrazione (Tail Number)*' : 'Registration / Tail Number*'}</label>
                         <input
                           type="text"
                           required
@@ -2660,7 +2670,7 @@ export default function App() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Nome Modello & Versione</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Nome Modello & Versione' : 'Model & Version Name'}</label>
                         <input
                           type="text"
                           value={editFormData.name || ''}
@@ -2669,7 +2679,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Data di Acquisto</label>
+                        <label className="text-slate-400 block mb-1">{t('hangar_purchase_date')}</label>
                         <input
                           type="date"
                           value={editFormData.purchase_date || ''}
@@ -2680,11 +2690,11 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">Foto Velivolo</label>
+                      <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Foto Velivolo' : 'Aircraft Photo'}</label>
                       
                       <div className="flex flex-wrap gap-2 items-center mb-2">
                         <label className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-semibold flex items-center gap-1.5 cursor-pointer shadow transition">
-                          <Camera size={14} /> Carica File Foto dal PC
+                          <Camera size={14} /> {lang === 'it' ? 'Carica File Foto dal PC' : 'Upload Photo File from PC'}
                           <input 
                             type="file" 
                             accept="image/*" 
@@ -2694,7 +2704,7 @@ export default function App() {
                             }} 
                           />
                         </label>
-                        <span className="text-slate-500 text-[11px]">oppure inserisci un URL diretto:</span>
+                        <span className="text-slate-500 text-[11px]">{lang === 'it' ? 'oppure inserisci un URL diretto:' : 'or enter direct URL:'}</span>
                       </div>
 
                       <input
@@ -2713,7 +2723,7 @@ export default function App() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Anno Fabbricazione</label>
+                        <label className="text-slate-400 block mb-1">{t('hangar_year_manuf')}</label>
                         <input
                           type="number"
                           value={editFormData.year_manufactured || 2021}
@@ -2722,7 +2732,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Prezzo Acquisto (€)</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Prezzo Acquisto (€)' : 'Purchase Price ($)'}</label>
                         <input
                           type="number"
                           value={editFormData.purchase_price_eur || 0}
@@ -2733,7 +2743,7 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">Motorizzazione</label>
+                      <label className="text-slate-400 block mb-1">{t('hangar_engine_type')}</label>
                       <input
                         type="text"
                         placeholder="es. 1x Williams International FJ33-5A Turbofan"
@@ -2744,7 +2754,7 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">Suite Avionica</label>
+                      <label className="text-slate-400 block mb-1">{t('hangar_avionics_suite')}</label>
                       <input
                         type="text"
                         placeholder="es. Cirrus Perspective+ by Garmin"
@@ -2756,7 +2766,7 @@ export default function App() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Aeroporto Stazionamento (ICAO)</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Aeroporto Stazionamento (ICAO)' : 'Stationed Airport (ICAO)'}</label>
                         <input
                           type="text"
                           value={editFormData.current_icao || ''}
@@ -2765,7 +2775,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Capacità Serbatoio (kg)</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Capacità Serbatoio (kg)' : 'Tank Capacity (kg)'}</label>
                         <input
                           type="number"
                           value={editFormData.fuel_capacity_kg || 900}
@@ -2788,7 +2798,7 @@ export default function App() {
                         disabled={loading}
                         className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
                       >
-                        Salva Modifiche
+                        {lang === 'it' ? 'Salva Modifiche' : 'Save Changes'}
                       </button>
                     </div>
                   </form>
@@ -2802,7 +2812,7 @@ export default function App() {
                 <div className="glass-panel p-6 rounded-2xl border border-cyan-500/40 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto">
                   <div className="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 className="text-base font-bold text-white flex items-center gap-2">
-                      <Plus size={18} className="text-cyan-400" /> Aggiungi Aeromobile all Hangar
+                      <Plus size={18} className="text-cyan-400" /> {lang === 'it' ? 'Aggiungi Aeromobile all\'Hangar' : 'Add Aircraft to Hangar'}
                     </h3>
                     <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-white">✕</button>
                   </div>
@@ -2846,7 +2856,7 @@ export default function App() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Categoria Operativa</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Categoria Operativa' : 'Operating Category'}</label>
                         <select
                           value={newAircraft.category}
                           onChange={(e) => setNewAircraft({...newAircraft, category: e.target.value})}
@@ -2858,7 +2868,7 @@ export default function App() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Aeroporto ICAO Iniziale</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Aeroporto ICAO Iniziale' : 'Initial ICAO Airport'}</label>
                         <input
                           type="text"
                           placeholder="es. LIRN"
@@ -2872,7 +2882,7 @@ export default function App() {
 
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Anno Fabbricazione</label>
+                        <label className="text-slate-400 block mb-1">{t('hangar_year_manuf')}</label>
                         <input
                           type="number"
                           value={newAircraft.year_manufactured}
@@ -2881,7 +2891,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Data di Acquisto</label>
+                        <label className="text-slate-400 block mb-1">{t('hangar_purchase_date')}</label>
                         <input
                           type="date"
                           value={newAircraft.purchase_date}
@@ -2890,7 +2900,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Prezzo Acquisto (€)</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Prezzo Acquisto (€)' : 'Purchase Price ($)'}</label>
                         <input
                           type="number"
                           value={newAircraft.purchase_price_eur}
@@ -2901,7 +2911,7 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">Motorizzazione</label>
+                      <label className="text-slate-400 block mb-1">{t('hangar_engine_type')}</label>
                       <input
                         type="text"
                         placeholder="es. 1x Williams International FJ33-5A Turbofan"
@@ -2912,7 +2922,7 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 block mb-1">Suite Avionica</label>
+                      <label className="text-slate-400 block mb-1">{t('hangar_avionics_suite')}</label>
                       <input
                         type="text"
                         placeholder="es. Cirrus Perspective+ Garmin G3000"
@@ -2927,7 +2937,7 @@ export default function App() {
                       
                       <div className="flex flex-wrap gap-2 items-center mb-2">
                         <label className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg text-xs font-mono font-semibold flex items-center gap-1.5 cursor-pointer shadow transition">
-                          <Camera size={14} /> Scegli File Immagine dal PC
+                          <Camera size={14} /> {lang === 'it' ? 'Scegli File Immagine dal PC' : 'Choose Image File from PC'}
                           <input 
                             type="file" 
                             accept="image/*" 
@@ -2963,7 +2973,7 @@ export default function App() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">Capacità Fuel (kg)</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Capacità Fuel (kg)' : 'Fuel Capacity (kg)'}</label>
                         <input
                           type="number"
                           value={newAircraft.fuel_capacity_kg}
@@ -2972,7 +2982,7 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">Fuel Iniziale (kg)</label>
+                        <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Fuel Iniziale (kg)' : 'Initial Fuel (kg)'}</label>
                         <input
                           type="number"
                           value={newAircraft.fuel_quantity_kg}
@@ -2995,7 +3005,7 @@ export default function App() {
                         disabled={loading}
                         className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-bold"
                       >
-                        Salva nell Hangar
+                        {lang === 'it' ? "Salva nell'Hangar" : "Save in Hangar"}
                       </button>
                     </div>
                   </form>
@@ -3031,10 +3041,10 @@ export default function App() {
               <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Key size={20} className="text-cyan-400" /> Mercato & Noleggio (Catalogo X-Plane 12)
+                    <Key size={20} className="text-cyan-400" /> {t('market_title')}
                   </h2>
                   <p className="text-xs text-slate-400 font-mono mt-0.5">
-                    Tutti gli aeromobili presenti nel tuo X-Plane 12, suddivisi per Macro Categoria, Costruttore e Modello.
+                    {lang === 'it' ? 'Tutti gli aeromobili presenti nel tuo X-Plane 12, suddivisi per Macro Categoria, Costruttore e Modello.' : 'All aircraft detected in your X-Plane 12, organized by Category, Manufacturer and Model.'}
                   </p>
                 </div>
 
@@ -3043,14 +3053,14 @@ export default function App() {
                   disabled={loading}
                   className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-mono font-bold text-xs px-4 py-2.5 rounded-lg shadow transition disabled:opacity-50"
                 >
-                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Ri-sincronizza Aerei da X-Plane 12
+                  <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {lang === 'it' ? 'Ri-sincronizza Aerei da X-Plane 12' : 'Re-sync Aircraft from X-Plane 12'}
                 </button>
               </div>
 
               {/* Currently Rented Aircraft in Fleet */}
               {fleet.filter(ac => ac.ownership === 'LEASED').length > 0 && (
                 <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-amber-300 font-mono uppercase">I Tuoi Aerei a Noleggio Attivi</h3>
+                  <h3 className="text-sm font-bold text-amber-300 font-mono uppercase">{lang === 'it' ? 'I Tuoi Aerei a Noleggio Attivi' : 'Your Active Leased Aircraft'}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {fleet.filter(ac => ac.ownership === 'LEASED').map((ac) => {
                       const isSelected = selectedAircraft?.id === ac.id;
@@ -3078,14 +3088,14 @@ export default function App() {
                                 onClick={() => setSelectedAircraft(ac)}
                                 className={`px-3 py-1.5 rounded text-xs font-mono font-bold ${isSelected ? 'bg-amber-400 text-black' : 'bg-slate-800 text-slate-200'}`}
                               >
-                                {isSelected ? 'IN USO' : 'SELEZIONA'}
+                                {isSelected ? (lang === 'it' ? 'IN USO' : 'IN USE') : (lang === 'it' ? 'SELEZIONA' : 'SELECT')}
                               </button>
                               <button
                                 onClick={() => handleDeleteAircraft(ac)}
                                 className="px-2.5 py-1.5 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-mono"
                                 title="Restituisci noleggio"
                               >
-                                Riconsegna
+                                {lang === 'it' ? 'Riconsegna' : 'Return Lease'}
                               </button>
                             </div>
                           </div>
@@ -3099,7 +3109,7 @@ export default function App() {
               {/* Macro Category Filter Tabs */}
               <div className="space-y-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800">
                 <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
-                  <span className="text-slate-400 font-semibold mr-1">Macro Categoria:</span>
+                  <span className="text-slate-400 font-semibold mr-1">{lang === 'it' ? 'Macro Categoria:' : 'Category:'}</span>
                   <button
                     onClick={() => { setMarketCategoryFilter('ALL'); setMarketManufFilter('ALL'); }}
                     className={`px-3 py-1.5 rounded-lg font-bold transition ${
@@ -3108,7 +3118,7 @@ export default function App() {
                         : 'bg-slate-800/80 text-slate-400 hover:text-white'
                     }`}
                   >
-                    TUTTE ({marketAircraft.length})
+                    {lang === 'it' ? 'TUTTE' : 'ALL'} ({marketAircraft.length})
                   </button>
                   {categoriesMeta.map((c) => {
                     const cnt = marketAircraft.filter(m => m.category === c.id).length;
@@ -3132,14 +3142,14 @@ export default function App() {
                 {/* Manufacturer Sub-Filter */}
                 {availableManufs.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono pt-2 border-t border-slate-800/80">
-                    <span className="text-slate-400 mr-1">Costruttore (Manufacturer):</span>
+                    <span className="text-slate-400 mr-1">{lang === 'it' ? 'Costruttore:' : 'Manufacturer:'}</span>
                     <button
                       onClick={() => setMarketManufFilter('ALL')}
                       className={`px-2.5 py-1 rounded transition ${
                         marketManufFilter === 'ALL' ? 'bg-slate-700 text-white font-bold' : 'bg-slate-900 text-slate-400 hover:text-white'
                       }`}
                     >
-                      Tutti
+                      {lang === 'it' ? 'Tutti' : 'All'}
                     </button>
                     {availableManufs.map((man) => (
                       <button
@@ -3160,9 +3170,9 @@ export default function App() {
               {finalFiltered.length === 0 ? (
                 <div className="glass-panel p-10 rounded-xl border border-slate-800 text-center space-y-3">
                   <Plane size={36} className="mx-auto text-slate-600" />
-                  <div className="text-slate-300 font-bold">Nessun aeromobile nel Mercato per i filtri selezionati.</div>
+                  <div className="text-slate-300 font-bold">{lang === 'it' ? 'Nessun aeromobile nel Mercato per i filtri selezionati.' : 'No aircraft found in Market for selected filters.'}</div>
                   <p className="text-xs text-slate-400 font-mono">
-                    Premi "Ri-sincronizza Aerei da X-Plane 12" in alto per leggere la tua cartella Aircraft.
+                    Premi "{lang === 'it' ? 'Ri-sincronizza Aerei da X-Plane 12' : 'Re-sync Aircraft from X-Plane 12'}" in alto per leggere la tua cartella Aircraft.
                   </p>
                 </div>
               ) : (
@@ -3179,7 +3189,7 @@ export default function App() {
                         {/* Macro Category Banner */}
                         <div className={`px-4 py-2.5 rounded-xl border flex items-center justify-between ${catMeta.color}`}>
                           <span className="font-black font-mono text-sm tracking-wide">{catMeta.label}</span>
-                          <span className="text-xs font-mono font-bold">{itemsInCat.length} modelli disponibili</span>
+                          <span className="text-xs font-mono font-bold">{itemsInCat.length} {lang === 'it' ? 'modelli disponibili' : 'models available'}</span>
                         </div>
 
                         {/* Grouped by Manufacturer */}
@@ -3225,8 +3235,8 @@ export default function App() {
                                         <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-2">{item.description}</p>
 
                                         <div className="grid grid-cols-2 gap-1.5 text-[11px] font-mono text-slate-400 bg-slate-900/60 p-2 rounded border border-slate-800/80">
-                                          <div>Crociera: <span className="text-white font-semibold">{item.cruise_speed_kts} kts</span></div>
-                                          <div>Serbatoio: <span className="text-purple-300 font-semibold">{item.fuel_capacity_kg} kg</span></div>
+                                          <div>{lang === 'it' ? 'Crociera:' : 'Cruise:'} <span className="text-white font-semibold">{item.cruise_speed_kts} kts</span></div>
+                                          <div>{lang === 'it' ? 'Serbatoio:' : 'Fuel Tank:'} <span className="text-purple-300 font-semibold">{item.fuel_capacity_kg} kg</span></div>
                                           <div className="col-span-2 truncate" title={item.engine_type}>
                                             Motore: <span className="text-slate-200">{item.engine_type}</span>
                                           </div>
@@ -3235,15 +3245,15 @@ export default function App() {
                                         {/* Transparent Pricing Box */}
                                         <div className="bg-slate-950/80 p-2.5 rounded-lg border border-slate-800 space-y-1 font-mono text-xs">
                                           <div className="flex justify-between items-center">
-                                            <span className="text-slate-400">Acquisto Cash:</span>
+                                            <span className="text-slate-400">{lang === 'it' ? 'Acquisto Cash:' : 'Cash Purchase:'}</span>
                                             <span className="font-bold text-white">{formatEuro(item.purchase_price_eur)}</span>
                                           </div>
                                           <div className="flex justify-between items-center">
-                                            <span className="text-slate-400">Anticipo Mutuo (10%):</span>
+                                            <span className="text-slate-400">{lang === 'it' ? 'Anticipo Mutuo (10%):' : 'Loan Down Payment (10%):'}</span>
                                             <span className="text-cyan-300 font-semibold">{formatEuro(item.financing_options?.bank_loan?.down_payment_eur)}</span>
                                           </div>
                                           <div className="flex justify-between items-center border-t border-slate-800 pt-1">
-                                            <span className="text-slate-400">Noleggio Orario:</span>
+                                            <span className="text-slate-400">{lang === 'it' ? 'Noleggio Orario:' : 'Hourly Lease:'}</span>
                                             <span className="font-bold text-emerald-400">{formatEuro(item.hourly_lease_rate_eur)} / ora</span>
                                           </div>
                                         </div>
@@ -3261,7 +3271,7 @@ export default function App() {
                                         }}
                                         className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-mono font-bold text-xs py-2.5 rounded-lg shadow transition flex items-center justify-center gap-2"
                                       >
-                                        <Key size={14} /> Acquista / Finanzia / Noleggia
+                                        <Key size={14} /> {lang === 'it' ? 'Acquista / Finanzia / Noleggia' : 'Buy / Finance / Lease'}
                                       </button>
                                     </div>
                                   </div>
@@ -3292,35 +3302,35 @@ export default function App() {
                 const modes = [
                   {
                     id: 'RENTAL_HOURLY',
-                    title: 'Noleggio Orario (Dry Lease)',
-                    badge: 'Zero Anticipo',
+                    title: lang === 'it' ? 'Noleggio Orario (Dry Lease)' : 'Hourly Dry Lease',
+                    badge: lang === 'it' ? 'Zero Anticipo' : 'Zero Down',
                     down: 0,
                     monthly: 0,
-                    sub: `Tariffa volo: ${formatEuro(selectedMarketItem.hourly_lease_rate_eur)} / ora • Riconsegna libera quando vuoi`
+                    sub: lang === 'it' ? `Tariffa volo: ${formatEuro(selectedMarketItem.hourly_lease_rate_eur)} / ora • Riconsegna libera quando vuoi` : `Flight rate: ${formatEuro(selectedMarketItem.hourly_lease_rate_eur)} / hour • Cancel any time`
                   },
                   {
                     id: 'OWNED_CASH',
-                    title: 'Acquisto Immediato (Cash)',
-                    badge: '100% Proprietà',
+                    title: lang === 'it' ? 'Acquisto Immediato (Cash)' : 'Immediate Purchase (Cash)',
+                    badge: lang === 'it' ? '100% Proprietà' : '100% Owned',
                     down: opts.cash.down_payment_eur,
                     monthly: 0,
-                    sub: 'Proprietà immediata e totale • Nessuna rata mensile'
+                    sub: lang === 'it' ? 'Proprietà immediata e totale • Nessuna rata mensile' : 'Immediate and full ownership • No monthly payments'
                   },
                   {
                     id: 'FINANCIAL_LEASE',
-                    title: 'Leasing Finanziario (12 Mesi)',
-                    badge: 'Anticipo 20%',
+                    title: lang === 'it' ? 'Leasing Finanziario (12 Mesi)' : 'Financial Lease (12 Months)',
+                    badge: lang === 'it' ? 'Anticipo 20%' : '20% Down',
                     down: opts.financial_lease.down_payment_eur,
                     monthly: opts.financial_lease.monthly_eur,
-                    sub: `12 rate mensili da ${formatEuro(opts.financial_lease.monthly_eur)}/mese • Riscatto automatico`
+                    sub: lang === 'it' ? `12 rate mensili da ${formatEuro(opts.financial_lease.monthly_eur)}/mese • Riscatto automatico` : `12 monthly payments of ${formatEuro(opts.financial_lease.monthly_eur)}/mo • Automatic buyout`
                   },
                   {
                     id: 'FINANCED_LOAN',
-                    title: 'Mutuo Bancario (24 Mesi)',
-                    badge: 'Anticipo 10%',
+                    title: lang === 'it' ? 'Mutuo Bancario (24 Mesi)' : 'Bank Loan (24 Months)',
+                    badge: lang === 'it' ? 'Anticipo 10%' : '10% Down',
                     down: opts.bank_loan.down_payment_eur,
                     monthly: opts.bank_loan.monthly_eur,
-                    sub: `24 rate mensili da ${formatEuro(opts.bank_loan.monthly_eur)}/mese • Rate leggere per liquidità`
+                    sub: lang === 'it' ? `24 rate mensili da ${formatEuro(opts.bank_loan.monthly_eur)}/mese • Rate leggere per liquidità` : `24 monthly payments of ${formatEuro(opts.bank_loan.monthly_eur)}/mo • Low payments for liquidity`
                   }
                 ];
                 const currentModeObj = modes.find(m => m.id === acquireMode) || modes[0];
@@ -3350,7 +3360,7 @@ export default function App() {
                       {/* Tail & Rental Base */}
                       <div className={`grid grid-cols-1 ${!isPurchase ? 'sm:grid-cols-2' : ''} gap-4 font-mono text-xs`}>
                         <div>
-                          <label className="text-slate-400 block mb-1">Marche Immatricolazione (Tail Number)</label>
+                          <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Marche Immatricolazione (Tail Number)' : 'Registration / Tail Number'}</label>
                           <input
                             type="text"
                             value={acquireTail}
@@ -3360,7 +3370,7 @@ export default function App() {
                         </div>
                         {!isPurchase && (
                           <div>
-                            <label className="text-slate-400 block mb-1">Aeroporto di Ritiro Noleggio (ICAO)</label>
+                            <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Aeroporto di Ritiro Noleggio (ICAO)' : 'Lease Pickup Airport (ICAO)'}</label>
                             <input
                               type="text"
                               maxLength={4}
@@ -3374,7 +3384,7 @@ export default function App() {
 
                       {/* 4 Acquisition Mode Selector Cards */}
                       <div className="space-y-2">
-                        <label className="text-xs font-mono text-slate-300 font-bold block">Scegli la Formula di Acquisizione:</label>
+                        <label className="text-xs font-mono text-slate-300 font-bold block">{lang === 'it' ? 'Scegli la Formula di Acquisizione:' : 'Select Acquisition Option:'}</label>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
                           {modes.map((m) => {
                             const selected = acquireMode === m.id;
@@ -3394,7 +3404,7 @@ export default function App() {
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 whitespace-nowrap">{m.badge}</span>
                                 </div>
                                 <div className="mt-1.5 flex justify-between items-baseline">
-                                  <span className="text-slate-400">Quota Aereo:</span>
+                                  <span className="text-slate-400">{lang === 'it' ? 'Quota Aereo:' : 'Aircraft Fee:'}</span>
                                   <span className={`font-bold text-sm ${affordable ? 'text-emerald-400' : 'text-rose-400'}`}>
                                     {formatEuro(m.down)}
                                   </span>
@@ -3430,7 +3440,7 @@ export default function App() {
                             >
                               <div className="flex justify-between items-start gap-2">
                                 <span className={`font-bold ${deliveryOption === 'PICKUP_DEALERSHIP' ? 'text-emerald-300' : 'text-white'}`}>
-                                  ✈️ Ritiro in Sede di Vendita
+                                  {lang === 'it' ? '✈️ Ritiro in Sede di Vendita' : '✈️ Dealership Pickup'}
                                 </span>
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
                                   GRATIS
@@ -3443,7 +3453,7 @@ export default function App() {
                                 {delInfo.dealership_name}
                               </div>
                               <p className="text-[10px] text-slate-400 font-sans mt-1.5 leading-snug">
-                                Volerai tu stesso il trasferimento (Ferry Flight) di {delInfo.distance_nm} NM verso la tua base {delInfo.home_base_icao}!
+                                {lang === 'it' ? `Volerai tu stesso il trasferimento (Ferry Flight) di ${delInfo.distance_nm} NM verso la tua base ${delInfo.home_base_icao}!` : `You will fly the ${delInfo.distance_nm} NM ferry flight back to your home base ${delInfo.home_base_icao}!`}
                               </p>
                             </div>
 
@@ -3458,7 +3468,7 @@ export default function App() {
                             >
                               <div className="flex justify-between items-start gap-2">
                                 <span className={`font-bold ${deliveryOption === 'DELIVER_HOME' ? 'text-amber-300' : 'text-white'}`}>
-                                  🚚 Consegna alla Base ({delInfo.home_base_icao})
+                                  {lang === 'it' ? `🚚 Consegna alla Base (${delInfo.home_base_icao})` : `🚚 Delivery to Base (${delInfo.home_base_icao})`}
                                 </span>
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold whitespace-nowrap">
                                   +{formatEuro(delInfo.ferry_delivery_fee_eur)}
@@ -3468,7 +3478,7 @@ export default function App() {
                                 Tratta Ferry: {delInfo.dealership_icao} ➔ {delInfo.home_base_icao} ({delInfo.distance_nm} NM)
                               </div>
                               <p className="text-[10px] text-slate-400 font-sans mt-1.5 leading-snug">
-                                Un equipaggio Ferry certificato consegnerà il velivolo pronto al volo direttamente nel tuo hangar a {delInfo.home_base_icao}.
+                                {lang === 'it' ? `Un equipaggio Ferry certificato consegnerà il velivolo pronto al volo direttamente nel tuo hangar a ${delInfo.home_base_icao}.` : `A certified ferry crew will deliver the aircraft flight-ready directly to your hangar at ${delInfo.home_base_icao}.`}
                               </p>
                             </div>
                           </div>
@@ -3478,11 +3488,11 @@ export default function App() {
                       {/* Financial Summary Banner */}
                       <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 font-mono text-xs space-y-1">
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Capitale Attuale Disponibile:</span>
+                          <span className="text-slate-400">{lang === 'it' ? 'Capitale Attuale Disponibile:' : 'Current Available Capital:'}</span>
                           <span className="font-bold text-white">{formatEuro(cash)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Quota Acquisizione Velivolo:</span>
+                          <span className="text-slate-400">{lang === 'it' ? 'Quota Acquisizione Velivolo:' : 'Aircraft Acquisition Fee:'}</span>
                           <span className="text-slate-200">-{formatEuro(currentModeObj.down)}</span>
                         </div>
                         {ferryCost > 0 && (
@@ -3492,13 +3502,13 @@ export default function App() {
                           </div>
                         )}
                         <div className="flex justify-between border-t border-slate-800 pt-1">
-                          <span className="text-slate-300 font-bold">Totale Esborso Oggi:</span>
+                          <span className="text-slate-300 font-bold">{lang === 'it' ? 'Totale Esborso Oggi:' : 'Total Due Today:'}</span>
                           <span className={`font-bold ${hasEnoughCash ? 'text-amber-300' : 'text-rose-400'}`}>
                             -{formatEuro(totalDueToday)}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-slate-400">Saldo Cassa Dopo Operazione:</span>
+                          <span className="text-slate-400">{lang === 'it' ? 'Saldo Cassa Dopo Operazione:' : 'Cash Balance After Operation:'}</span>
                           <span className={`font-bold ${hasEnoughCash ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {formatEuro(cash - totalDueToday)}
                           </span>
@@ -3524,7 +3534,7 @@ export default function App() {
                           disabled={loading || !hasEnoughCash}
                           className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono disabled:opacity-40 transition"
                         >
-                          Conferma Operazione
+                          {lang === 'it' ? 'Conferma Operazione' : 'Confirm Operation'}
                         </button>
                       </div>
                     </div>
@@ -3540,7 +3550,7 @@ export default function App() {
           <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-xl font-bold text-white">Bacheca Incarichi Operativi</h2>
+                <h2 className="text-xl font-bold text-white">{lang === 'it' ? 'Bacheca Incarichi Operativi' : 'Operational Flight Contracts'}</h2>
                 <p className="text-xs text-slate-400 font-mono">
                   Contratti commerciali disponibili da <span className="text-cyan-300 font-bold">{selectedAircraft?.current_icao}</span> per {selectedAircraft?.tail_number}
                 </p>
@@ -3551,7 +3561,7 @@ export default function App() {
                 disabled={loading}
                 className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 rounded-lg text-sm transition"
               >
-                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Genera Nuovi Incarichi
+                <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> {lang === 'it' ? 'Genera Nuovi Incarichi' : 'Generate New Jobs'}
               </button>
             </div>
 
@@ -3587,7 +3597,7 @@ export default function App() {
 
                   <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
                     <div>
-                      <div className="text-[10px] font-mono text-slate-400 uppercase">Ricavo Netto</div>
+                      <div className="text-[10px] font-mono text-slate-400 uppercase">{lang === 'it' ? 'Ricavo Netto' : 'Net Reward'}</div>
                       <div className="text-base font-bold font-mono text-emerald-400">{formatEuro(job.reward_usd)}</div>
                     </div>
 
@@ -3595,7 +3605,7 @@ export default function App() {
                       onClick={() => handleAcceptJob(job.id)}
                       className="bg-cyan-500 hover:bg-cyan-400 text-black font-semibold font-mono text-xs px-3 py-1.5 rounded transition"
                     >
-                      Accetta Incarico
+                      {lang === 'it' ? 'Accetta Incarico' : 'Accept Job'}
                     </button>
                   </div>
                 </div>
@@ -3604,7 +3614,7 @@ export default function App() {
 
             {jobs.length === 0 && (
               <div className="text-center py-12 glass-panel rounded-xl border border-dashed border-slate-800">
-                <p className="text-slate-400 font-mono text-sm">Nessun incarico attivo per questo aeroporto.</p>
+                <p className="text-slate-400 font-mono text-sm">{lang === 'it' ? 'Nessun incarico attivo per questo aeroporto.' : 'No active jobs available at this airport.'}</p>
                 <button
                   onClick={handleGenerateJobs}
                   className="mt-3 text-cyan-400 hover:underline font-mono text-xs"
@@ -3623,7 +3633,7 @@ export default function App() {
             <div className="glass-panel p-5 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Radio size={20} className="text-cyan-400" /> Piano di Volo & Dispatch
+                  <Radio size={20} className="text-cyan-400" /> {t('dispatch_title')}
                 </h2>
                 <p className="text-xs text-slate-400 font-mono mt-0.5">
                   Importa il piano operativo da SimBrief oppure compila manualmente la rotta e scegli se operare a scopo commerciale o personale/ferry.
@@ -3645,7 +3655,7 @@ export default function App() {
                       {ac.tail_number} — {ac.name} @ {ac.current_icao}
                     </option>
                   ))}
-                  {fleet.length === 0 && <option value="">Nessun aereo in flotta</option>}
+                  {fleet.length === 0 && <option value="">{t('mission_no_aircraft')}</option>}
                 </select>
 
                 {/* Switcher */}
@@ -3656,7 +3666,7 @@ export default function App() {
                       dispatchMode === 'simbrief' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    📡 Da SimBrief
+                    {lang === 'it' ? '📡 Da SimBrief' : '📡 From SimBrief'}
                   </button>
                   <button
                     onClick={() => setDispatchMode('manual')}
@@ -3664,7 +3674,7 @@ export default function App() {
                       dispatchMode === 'manual' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    ✍️ Piano Manuale
+                    {lang === 'it' ? '✍️ Piano Manuale' : '✍️ Manual Plan'}
                   </button>
                 </div>
               </div>
@@ -3672,7 +3682,7 @@ export default function App() {
 
             {/* Economic Regime Selector (Default = Commercial with Revenue) */}
             <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-2">
-              <div className="text-xs font-mono text-slate-300 font-bold">Regime Economico del Volo:</div>
+              <div className="text-xs font-mono text-slate-300 font-bold">{lang === 'it' ? 'Regime Economico del Volo:' : 'Flight Economic Mode:'}</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
                 <div
                   onClick={() => {
@@ -3687,9 +3697,9 @@ export default function App() {
                 >
                   <div className="flex justify-between items-center">
                     <span className={`font-bold ${planIsCommercial ? 'text-emerald-300' : 'text-white'}`}>
-                      💰 Volo Commerciale ad Incasso (Default)
+                      {t('dispatch_commercial_mode')}
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">RICAVI ATTIVI</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">{lang === 'it' ? 'RICAVI ATTIVI' : 'ACTIVE REVENUE'}</span>
                   </div>
                   <p className="text-[11px] text-slate-400 font-sans mt-1">
                     Genera ricavi automatici in base a distanza, passeggeri e carico trasportato al netto di carburante e tasse.
@@ -3709,9 +3719,9 @@ export default function App() {
                 >
                   <div className="flex justify-between items-center">
                     <span className={`font-bold ${!planIsCommercial ? 'text-amber-300' : 'text-white'}`}>
-                      ✈️ Volo Personale / Trasferimento Ferry
+                      {t('dispatch_ferry_mode')}
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">€ 0 RICAVI</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{lang === 'it' ? '€ 0 RICAVI' : '$0 REVENUE'}</span>
                   </div>
                   <p className="text-[11px] text-slate-400 font-sans mt-1">
                     Nessun compenso (€ 0,00). Vengono registrati solo i costi reali (carburante, tasse, usura): perfetto per voli privati o ritiro aereo in sede!
@@ -3742,7 +3752,7 @@ export default function App() {
                       />
                       <div>
                         <span className={`font-mono text-xs font-bold ${planExcludeCrew ? 'text-amber-300' : 'text-slate-200'}`}>
-                          🧑‍✈️ Escludi Costo Equipaggio (Volo Solo / VFR / Pilota Proprietario)
+                          {lang === 'it' ? '🧑‍✈️ Escludi Costo Equipaggio (Volo Solo / VFR / Pilota Proprietario)' : '🧑‍✈️ Exclude Crew Cost (Solo Flight / VFR / Owner Pilot)'}
                         </span>
                         <p className="text-[11px] text-slate-400 font-sans">
                           {planExcludeCrew
@@ -3810,7 +3820,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={async () => {
-                      const tName = prompt('Nome del nuovo Tour (es. IVAO World Tour 2026):');
+                      const tName = prompt(lang === 'it' ? 'Nome del nuovo Tour (es. IVAO World Tour 2026):' : 'New Tour Name (e.g. IVAO World Tour 2026):');
                       if (tName) {
                         const created = await handleCreateTour(tName);
                         if (created) setPlanTourId(String(created.id));
@@ -3828,7 +3838,7 @@ export default function App() {
             {dispatchMode === 'simbrief' && (
               <div className="space-y-6">
                 <div className="glass-panel p-6 rounded-xl border border-slate-800">
-                  <h3 className="text-base font-bold text-white">Scarica OFP da SimBrief</h3>
+                  <h3 className="text-base font-bold text-white">{t('dispatch_btn_fetch_sb')}</h3>
                   <div className="flex flex-wrap gap-3 mt-3">
                     <input
                       type="text"
@@ -3842,7 +3852,7 @@ export default function App() {
                       disabled={loading}
                       className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 rounded-lg text-sm font-mono transition flex items-center gap-2"
                     >
-                      <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Scarica Ultimo Piano
+                      <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {lang === 'it' ? 'Scarica Ultimo Piano' : 'Fetch Latest Plan'}
                     </button>
                   </div>
                 </div>
@@ -3901,7 +3911,7 @@ export default function App() {
                         disabled={loading || !selectedAircraft}
                         className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold font-mono text-sm px-5 py-2.5 rounded-lg shadow transition disabled:opacity-50"
                       >
-                        <CheckCircle size={16} /> Conferma Piano SimBrief & Vai in Plancia
+                        <CheckCircle size={16} /> {lang === 'it' ? 'Conferma Piano SimBrief & Vai in Plancia' : 'Confirm SimBrief Plan & Go to Cockpit'}
                       </button>
                     </div>
                   </div>
@@ -3913,7 +3923,7 @@ export default function App() {
             {dispatchMode === 'manual' && (
               <form onSubmit={handleCreateManualPlan} className="glass-panel p-6 rounded-xl border border-cyan-500/30 space-y-5 font-mono text-xs" noValidate>
                 <div className="border-b border-slate-800 pb-3">
-                  <h3 className="text-base font-bold text-white">Compilazione Manuale Piano di Volo (Senza SimBrief)</h3>
+                  <h3 className="text-base font-bold text-white">{lang === 'it' ? 'Compilazione Manuale Piano di Volo (Senza SimBrief)' : 'Manual Flight Plan Dispatch (Without SimBrief)'}</h3>
                   <p className="text-[11px] text-slate-400 mt-0.5">
                     Inserisci partenza, arrivo e carico: la distanza reale e l'eventuale incasso verranno calcolati automaticamente dagli aeroporti di X-Plane 12.
                   </p>
@@ -3921,7 +3931,7 @@ export default function App() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
-                    <label className="text-slate-400 block mb-1">Aeroporto Partenza (ICAO) *</label>
+                    <label className="text-slate-400 block mb-1">{t('dispatch_orig_label')}</label>
                     <input
                       type="text"
                       maxLength={4}
@@ -3937,7 +3947,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-slate-400 block mb-1">Aeroporto Destinazione (ICAO) *</label>
+                    <label className="text-slate-400 block mb-1">{t('dispatch_dest_label')}</label>
                     <input
                       type="text"
                       maxLength={4}
@@ -3953,7 +3963,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-slate-400 block mb-1">Alternato (Opzionale)</label>
+                    <label className="text-slate-400 block mb-1">{t('dispatch_alt_label')}</label>
                     <input
                       type="text"
                       maxLength={4}
@@ -3965,7 +3975,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-slate-400 block mb-1">Callsign / N. Volo (Opzionale)</label>
+                    <label className="text-slate-400 block mb-1">{lang === 'it' ? 'Callsign / N. Volo (Opzionale)' : 'Callsign / Flight No. (Optional)'}</label>
                     <input
                       type="text"
                       placeholder="es. SO104"
@@ -3991,7 +4001,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-slate-400 block mb-1">Passeggeri a Bordo (Pax)</label>
+                    <label className="text-slate-400 block mb-1">{t('dispatch_pax_label')}</label>
                     <input
                       type="number"
                       min="0"
@@ -4006,7 +4016,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="text-slate-400 block mb-1">Cargo / Bagagli (kg)</label>
+                    <label className="text-slate-400 block mb-1">{t('dispatch_cargo_label')}</label>
                     <input
                       type="number"
                       min="0"
@@ -4022,7 +4032,7 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="text-slate-400 block mb-1">Rotta / Note (Opzionale)</label>
+                  <label className="text-slate-400 block mb-1">{t('dispatch_route_label')}</label>
                   <input
                     type="text"
                     placeholder="es. VFR diretto / DCT TEA / Piani personali"
@@ -4050,7 +4060,7 @@ export default function App() {
                       <div className={`text-lg font-black ${planIsCommercial ? 'text-emerald-400' : 'text-slate-400'}`}>
                         {planIsCommercial
                           ? formatEuro(manualEstimate?.estimated_reward_eur ?? 650)
-                          : '€ 0,00 (Solo Costi)'}
+                          : t('mission_costs_only', '€ 0,00 (Solo Costi)')}
                       </div>
                     </div>
 
@@ -4059,7 +4069,7 @@ export default function App() {
                       disabled={loading || !selectedAircraft}
                       className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-3 rounded-lg shadow transition disabled:opacity-50"
                     >
-                      <CheckCircle size={16} /> Conferma Piano Manuale & Vai in Plancia
+                      <CheckCircle size={16} /> {lang === 'it' ? 'Conferma Piano Manuale & Vai in Plancia' : 'Confirm Manual Plan & Go to Cockpit'}
                     </button>
                   </div>
                 </div>
@@ -4074,7 +4084,7 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-4 glass-panel p-5 rounded-xl border border-slate-800">
               <div>
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Wrench size={22} className="text-cyan-400" /> Officina e Stato Usura Componenti
+                  <Wrench size={22} className="text-cyan-400" /> {t('maint_title')}
                 </h2>
                 <p className="text-xs text-slate-400 font-mono mt-0.5">
                   Seleziona dal menu a tendina il velivolo da ispezionare e gestire.
@@ -4084,7 +4094,7 @@ export default function App() {
               {/* Aircraft Dropdown Selector */}
               <div className="flex items-center gap-3">
                 <label className="text-xs font-mono text-slate-400 uppercase font-semibold">
-                  Velivolo Selezionato:
+                  {lang === 'it' ? 'Velivolo Selezionato:' : 'Selected Aircraft:'}
                 </label>
                 <select
                   value={selectedAircraft?.id || ''}
@@ -4109,7 +4119,7 @@ export default function App() {
                 <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
                   <MapPin size={15} className="text-rose-400" />
                   <div>
-                    <div className="text-slate-400">Posizione Attuale</div>
+                    <div className="text-slate-400">{lang === 'it' ? 'Posizione Attuale' : 'Current Location'}</div>
                     <div className="font-bold text-white text-sm">{selectedAircraft.current_icao}</div>
                   </div>
                 </div>
@@ -4117,7 +4127,7 @@ export default function App() {
                 <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
                   <Clock size={15} className="text-cyan-400" />
                   <div>
-                    <div className="text-slate-400">Ore Cellula / Motore</div>
+                    <div className="text-slate-400">{lang === 'it' ? 'Ore Cellula / Motore' : 'Airframe / Engine Hours'}</div>
                     <div className="font-bold text-white text-sm">{selectedAircraft.airframe_hours.toFixed(1)} h / {selectedAircraft.engine_hours.toFixed(1)} h</div>
                   </div>
                 </div>
@@ -4125,7 +4135,7 @@ export default function App() {
                 <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
                   <Fuel size={15} className="text-purple-400" />
                   <div>
-                    <div className="text-slate-400">Carburante a Bordo</div>
+                    <div className="text-slate-400">{lang === 'it' ? 'Carburante a Bordo' : 'Fuel on Board'}</div>
                     <div className="font-bold text-white text-sm">{selectedAircraft.fuel_quantity_kg.toFixed(0)} / {selectedAircraft.fuel_capacity_kg.toFixed(0)} kg</div>
                   </div>
                 </div>
@@ -4133,9 +4143,9 @@ export default function App() {
                 <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex items-center gap-2">
                   <ShieldAlert size={15} className="text-amber-400" />
                   <div>
-                    <div className="text-slate-400">Tipo Possesso</div>
+                    <div className="text-slate-400">{lang === 'it' ? 'Tipo Possesso' : 'Ownership Type'}</div>
                     <div className="font-bold text-emerald-400 text-sm">
-                      {selectedAircraft.ownership === 'OWNED' ? 'DI PROPRIETÀ' : `NOLEGGIO (${formatEuro(selectedAircraft.hourly_lease_rate)}/h)`}
+                      {selectedAircraft.ownership === 'OWNED' ? (lang === 'it' ? 'DI PROPRIETÀ' : 'OWNED') : (lang === 'it' ? `NOLEGGIO (${formatEuro(selectedAircraft.hourly_lease_rate)}/h)` : `LEASED (${formatEuro(selectedAircraft.hourly_lease_rate)}/h)`)}
                     </div>
                   </div>
                 </div>
@@ -4177,7 +4187,7 @@ export default function App() {
             {/* Service & Repairs Operations */}
             <div className="glass-panel p-6 rounded-xl border border-slate-800">
               <h3 className="text-base font-bold text-white mb-3 flex items-center gap-2">
-                <Wrench size={18} className="text-cyan-400" /> Cataloghi Manutenzione Programmata & Straordinaria
+                <Wrench size={18} className="text-cyan-400" /> {lang === 'it' ? 'Cataloghi Manutenzione Programmata & Straordinaria' : 'Scheduled & Corrective Maintenance Catalog'}
               </h3>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -4203,7 +4213,7 @@ export default function App() {
                       disabled={!selectedAircraft}
                       className="mt-4 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 text-xs font-mono font-semibold py-1.5 rounded transition"
                     >
-                      Esegui Intervento
+                      {lang === 'it' ? 'Esegui Intervento' : 'Perform Service'}
                     </button>
                   </div>
                 ))}
@@ -4213,7 +4223,7 @@ export default function App() {
             {/* Test Injection Failure Panel */}
             <div className="glass-panel p-5 rounded-xl border border-rose-900/40 bg-rose-950/10">
               <h3 className="text-sm font-bold text-rose-300 flex items-center gap-2 mb-1">
-                <ShieldAlert size={16} /> Banco Prova Guasti Reali (Simulatore Iniezione X-Plane 12)
+                <ShieldAlert size={16} /> {lang === 'it' ? 'Banco Prova Guasti Reali (Simulatore Iniezione X-Plane 12)' : 'Failure Injection Test Bench (X-Plane 12)'}
               </h3>
               <p className="text-xs text-slate-400 font-mono mb-3">
                 Usa questi pulsanti per testare l'iniezione bidirezionale di avarie native direttamente nei Dataref di X-Plane 12:
@@ -4256,7 +4266,7 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <TrendingUp size={22} className="text-emerald-400" /> Bilancio, Economia & Tempo Operativo
+                  <TrendingUp size={22} className="text-emerald-400" /> {lang === 'it' ? 'Bilancio, Economia & Tempo Operativo' : 'Finances, Accounting & Operating Calendar'}
                 </h2>
                 <p className="text-xs text-slate-400 font-mono mt-1">
                   Gestione patrimoniale e contabile, controllo cassa, conto economico e dilatazione temporale per costi fissi.
@@ -4266,10 +4276,10 @@ export default function App() {
               {/* Sub-Tabs Switcher */}
               <div className="flex flex-wrap items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-lg text-xs font-mono">
                 {[
-                  { id: 'overview', label: 'Quadro & Bilancio', icon: FileText },
-                  { id: 'crew', label: `Personale Fisso (${crewRoster?.hired?.length || 0})`, icon: Shield },
-                  { id: 'ledger', label: `Registro Cassa (${financialLedger.length})`, icon: Wallet },
-                  { id: 'rules', label: 'Regole & Formule', icon: HelpCircle }
+                  { id: 'overview', label: t('finances_tab_overview', 'Quadro & Bilancio'), icon: FileText },
+                  { id: 'crew', label: `${t('finances_tab_crew', 'Personale Fisso')} (${crewRoster?.hired?.length || 0})`, icon: Shield },
+                  { id: 'ledger', label: `${t('finances_tab_ledger', 'Registro Cassa')} (${financialLedger.length})`, icon: Wallet },
+                  { id: 'rules', label: t('finances_tab_guide', 'Regole & Formule'), icon: HelpCircle }
                 ].map((st) => {
                   const SIcon = st.icon;
                   const active = financeSubTab === st.id;
@@ -4364,7 +4374,7 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800 font-mono text-xs">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-slate-400 flex items-center gap-1 mr-1">
-                  <Calendar size={13} className="text-cyan-400" /> Periodo Conto Economico:
+                  <Calendar size={13} className="text-cyan-400" /> {lang === 'it' ? 'Periodo Conto Economico:' : 'P&L Period:'}
                 </span>
                 <button
                   onClick={() => {
@@ -4499,7 +4509,7 @@ export default function App() {
                     <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
                       <div>
                         <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                          <FileText size={16} className="text-cyan-400" /> Stato Patrimoniale (Asset & Flotta)
+                          <FileText size={16} className="text-cyan-400" /> {lang === 'it' ? 'Stato Patrimoniale (Asset & Flotta)' : 'Balance Sheet (Assets & Fleet)'}
                         </h3>
                         <p className="text-[11px] text-slate-400 font-mono mt-0.5">
                           Consistenza patrimoniale societaria • {financialOverview?.operating_month_label || 'Mese Corrente'}
@@ -4514,13 +4524,13 @@ export default function App() {
                       {/* Attivo Circolante */}
                       <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
                         <div className="flex justify-between items-center text-slate-300 font-bold">
-                          <span>1. ATTIVO CIRCOLANTE</span>
+                          <span>{lang === 'it' ? '1. ATTIVO CIRCOLANTE' : '1. CURRENT ASSETS'}</span>
                           <span className="text-emerald-400">
                             {formatEuro(financialOverview?.balance_sheet?.cash_balance_eur ?? 175000)}
                           </span>
                         </div>
                         <div className="flex justify-between items-center text-slate-400 pl-3">
-                          <span>Disponibilità liquide (Conto aziendale)</span>
+                          <span>{lang === 'it' ? 'Disponibilità liquide (Conto aziendale)' : 'Cash & Liquid Funds (Company account)'}</span>
                           <span className="text-slate-200">
                             {formatEuro(financialOverview?.balance_sheet?.cash_balance_eur ?? 175000)}
                           </span>
@@ -4530,7 +4540,7 @@ export default function App() {
                       {/* Attivo Fisso Immobilizzato */}
                       <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
                         <div className="flex justify-between items-center text-slate-300 font-bold">
-                          <span>2. IMMOBILIZZAZIONI MATERIALI (FLOTTA)</span>
+                          <span>{lang === 'it' ? '2. IMMOBILIZZAZIONI MATERIALI (FLOTTA)' : '2. FIXED ASSETS (OWNED FLEET)'}</span>
                           <span className="text-cyan-300">
                             {formatEuro(financialOverview?.balance_sheet?.fleet_book_value_eur ?? 0)}
                           </span>
@@ -4547,7 +4557,7 @@ export default function App() {
                             </div>
                           ))}
                           {fleet.filter(a => a.ownership === 'OWNED').length === 0 && (
-                            <div className="text-slate-500 py-1">Nessun aereo di proprietà registrato.</div>
+                            <div className="text-slate-500 py-1">{lang === 'it' ? 'Nessun aereo di proprietà registrato.' : 'No owned aircraft registered.'}</div>
                           )}
                         </div>
                       </div>
@@ -4555,7 +4565,7 @@ export default function App() {
                       {/* Aeromobili a Noleggio (Fuori Bilancio) */}
                       <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-800/60 text-slate-400 space-y-1">
                         <div className="flex justify-between items-center text-slate-300 font-semibold text-[11px]">
-                          <span>3. AEROMOBILI IN LEASE / NOLEGGIO ATTIVI</span>
+                          <span>{lang === 'it' ? '3. AEROMOBILI IN LEASE / NOLEGGIO ATTIVI' : '3. ACTIVE LEASED AIRCRAFT'}</span>
                           <span className="text-amber-400">{fleet.filter(a => a.ownership === 'LEASED').length} aerei</span>
                         </div>
                         <p className="text-[10px] text-slate-500 font-sans">
@@ -4565,7 +4575,7 @@ export default function App() {
 
                       {/* Totale Patrimonio Netto */}
                       <div className="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 flex justify-between items-center font-bold text-sm">
-                        <span className="text-white">TOTALE PATRIMONIO NETTO</span>
+                        <span className="text-white">{lang === 'it' ? 'TOTALE PATRIMONIO NETTO' : 'TOTAL NET WORTH'}</span>
                         <span className="text-cyan-300">
                           {formatEuro(financialOverview?.balance_sheet?.total_net_worth_eur ?? 0)}
                         </span>
@@ -4578,7 +4588,7 @@ export default function App() {
                     <div className="border-b border-slate-800 pb-3 flex justify-between items-center">
                       <div>
                         <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                          <TrendingUp size={16} className="text-emerald-400" /> Conto Economico Progressivo (P&L)
+                          <TrendingUp size={16} className="text-emerald-400" /> {lang === 'it' ? 'Conto Economico Progressivo (P&L)' : 'Income Statement (P&L)'}
                         </h3>
                         <p className="text-[11px] text-slate-400 font-mono mt-0.5">
                           Dettaglio ricavi, costi operativi DOC, manutenzioni e oneri fissi
@@ -4593,7 +4603,7 @@ export default function App() {
                       {/* (+) Ricavi Operativi */}
                       <div className="bg-emerald-950/20 p-3 rounded-lg border border-emerald-500/30 space-y-1.5">
                         <div className="flex justify-between items-center font-bold text-emerald-300">
-                          <span>(+) RICAVI TOTALI DA VOLI & INCARICHI</span>
+                          <span>{lang === 'it' ? '(+) RICAVI TOTALI DA VOLI & INCARICHI' : '(+) TOTAL REVENUE FROM FLIGHTS & JOBS'}</span>
                           <span className="text-sm">
                             {formatEuro(financialOverview?.income_statement?.gross_revenue_eur ?? 0)}
                           </span>
@@ -4606,62 +4616,62 @@ export default function App() {
                       {/* (-) Costi Operativi Diretti (DOC) */}
                       <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
                         <div className="flex justify-between items-center font-bold text-slate-300">
-                          <span>(-) COSTI OPERATIVI DIRETTI (DOC)</span>
+                          <span>{lang === 'it' ? '(-) COSTI OPERATIVI DIRETTI (DOC)' : '(-) DIRECT OPERATING COSTS (DOC)'}</span>
                           <span className="text-rose-400">
                             -{formatEuro(financialOverview?.income_statement?.direct_operating_costs?.total_eur ?? 0)}
                           </span>
                         </div>
                         <div className="pl-3 space-y-1 text-slate-400">
                           <div className="flex justify-between items-center">
-                            <span>Carburante Jet-A1 (1.75 €/kg)</span>
+                            <span>{lang === 'it' ? 'Carburante Jet-A1' : 'Jet-A1 Fuel'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.fuel_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Tasse Atterraggio (MTOW / Base)</span>
+                            <span>{lang === 'it' ? 'Tasse Atterraggio (MTOW / Base)' : 'Landing Fees (MTOW / Base)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.landing_fees_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Sorvolo & Navigazione Aerea (Eurocontrol / ANSP)</span>
+                            <span>{lang === 'it' ? 'Sorvolo & Navigazione Aerea (Eurocontrol / ANSP)' : 'En-route & Navigation (ANSP / Eurocontrol)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.nav_fees_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Catering, FBO & Handling Passeggeri</span>
+                            <span>{lang === 'it' ? 'Catering, FBO & Handling Passeggeri' : 'Catering, FBO & Pax Handling'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.handling_fees_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Riserva Manutenzione (Power-by-the-Hour)</span>
+                            <span>{lang === 'it' ? 'Riserva Manutenzione (Power-by-the-Hour)' : 'Maintenance Reserves (PBH)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.maint_reserves_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Costi Indiretti IOC (GDS / Broker / EU261)</span>
+                            <span>{lang === 'it' ? 'Costi Indiretti IOC (GDS / Broker / EU261)' : 'Indirect Costs IOC (GDS / Broker / EU261)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.ioc_costs_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Canoni Orari Noleggio (Lease Block Hours)</span>
+                            <span>{lang === 'it' ? 'Canoni Orari Noleggio (Lease Block Hours)' : 'Hourly Lease Rates (Block Hours)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.aircraft_leases_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Equipaggio Freelance a Volo (Piloti / A.V.)</span>
+                            <span>{lang === 'it' ? 'Equipaggio Freelance a Volo (Piloti / A.V.)' : 'Freelance Crew (Pilots / Flight Attendants)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.crew_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Penali & Risarcimenti Touchdown</span>
+                            <span>{lang === 'it' ? 'Penali & Risarcimenti Touchdown' : 'Touchdown Penalties & Compensation'}</span>
                             <span className="text-rose-300">
                               {formatEuro(financialOverview?.income_statement?.direct_operating_costs?.penalties_eur ?? 0)}
                             </span>
@@ -4672,45 +4682,45 @@ export default function App() {
                       {/* (-) Manutenzione e Officina */}
                       <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-1.5">
                         <div className="flex justify-between items-center font-bold text-slate-300">
-                          <span>(-) MANUTENZIONE & RIPARAZIONI OFFICINA</span>
+                          <span>{lang === 'it' ? '(-) MANUTENZIONE & RIPARAZIONI OFFICINA' : '(-) MAINTENANCE & WORKSHOP REPAIRS'}</span>
                           <span className="text-rose-400">
                             -{formatEuro(financialOverview?.income_statement?.maintenance_costs?.total_eur ?? 0)}
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 pl-3">
-                          Tagliandi 50h/100h, ispezioni annuali EASA, freni, gomme e revisioni motore
+                          {lang === 'it' ? 'Tagliandi 50h/100h, ispezioni annuali EASA, freni, gomme e revisioni motore' : '50h/100h checks, annual certified inspections, brakes, tires and engine overhauls'}
                         </p>
                       </div>
 
                       {/* (-) Costi Fissi di Gestione */}
                       <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 space-y-2">
                         <div className="flex justify-between items-center font-bold text-slate-300">
-                          <span>(-) ONERI FISSI MENSILI</span>
+                          <span>{lang === 'it' ? '(-) ONERI FISSI MENSILI' : '(-) MONTHLY FIXED OVERHEADS'}</span>
                           <span className="text-rose-400">
                             -{formatEuro(financialOverview?.income_statement?.fixed_overheads?.total_eur ?? 0)}
                           </span>
                         </div>
                         <div className="pl-3 space-y-1 text-slate-400">
                           <div className="flex justify-between items-center">
-                            <span>Rimessaggio & Hangaraggio Mensile</span>
+                            <span>{lang === 'it' ? 'Rimessaggio & Hangaraggio Mensile' : 'Monthly Hangar Storage'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.hangar_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Polizze Assicurative Flotta (Corpi & RC)</span>
+                            <span>{lang === 'it' ? 'Polizze Assicurative Flotta (Corpi & RC)' : 'Fleet Insurance (Hull & Liability)'}</span>
                             <span className="text-slate-200">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.insurance_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Rate Leasing Finanziario & Mutui</span>
+                            <span>{lang === 'it' ? 'Rate Leasing Finanziario & Mutui' : 'Financial Lease & Loan Payments'}</span>
                             <span className="text-amber-300">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.financing_eur ?? 0)}
                             </span>
                           </div>
                           <div className="flex justify-between items-center">
-                            <span>Stipendi Mensili Equipaggi Assunti</span>
+                            <span>{lang === 'it' ? 'Stipendi Mensili Equipaggi Assunti' : 'Salaried Crew Monthly Payroll'}</span>
                             <span className="text-indigo-300">
                               {formatEuro(financialOverview?.income_statement?.fixed_overheads?.crew_salaries_eur ?? 0)}
                             </span>
@@ -4725,9 +4735,9 @@ export default function App() {
                           : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
                       }`}>
                         <div>
-                          <span>RISULTATO D ESERCIZIO (UTILE NETTO)</span>
+                          <span>{lang === 'it' ? 'RISULTATO D\'ESERCIZIO (UTILE NETTO)' : 'NET OPERATING PROFIT'}</span>
                           <span className="text-[11px] font-normal block text-slate-400">
-                            Margine Operativo sul Fatturato: {financialOverview?.income_statement?.profit_margin_pct ?? 0}%
+                            {lang === 'it' ? 'Margine Operativo sul Fatturato:' : 'Operating Margin:'} {financialOverview?.income_statement?.profit_margin_pct ?? 0}%
                           </span>
                         </div>
                         <span className="text-base font-mono">
@@ -4843,25 +4853,25 @@ export default function App() {
                 <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
                   <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
                     <span className="text-slate-400 flex items-center gap-1 mr-1">
-                      <Filter size={13} /> Filtra Categoria:
+                      <Filter size={13} /> {lang === 'it' ? 'Filtra Categoria:' : 'Filter Category:'}
                     </span>
                     {[
-                      { id: 'ALL', label: 'Tutti' },
-                      { id: 'REVENUE', label: 'Incassi Voli (+)' },
-                      { id: 'FUEL', label: 'Carburante' },
-                      { id: 'LANDING_FEE', label: 'Tasse Atterraggio' },
-                      { id: 'NAV_FEE', label: 'Navigazione ANSP' },
+                      { id: 'ALL', label: lang === 'it' ? 'Tutti' : 'All' },
+                      { id: 'REVENUE', label: lang === 'it' ? 'Incassi Voli (+)' : 'Flight Revenue (+)' },
+                      { id: 'FUEL', label: lang === 'it' ? 'Carburante' : 'Fuel' },
+                      { id: 'LANDING_FEE', label: lang === 'it' ? 'Tasse Atterraggio' : 'Landing Fees' },
+                      { id: 'NAV_FEE', label: lang === 'it' ? 'Navigazione ANSP' : 'ANSP Navigation' },
                       { id: 'HANDLING', label: 'Handling/FBO' },
-                      { id: 'MAINT_RESERVE', label: 'Riserve Manut.' },
+                      { id: 'MAINT_RESERVE', label: lang === 'it' ? 'Riserve Manut.' : 'Maint. Reserves' },
                       { id: 'IOC', label: 'IOC / GDS' },
-                      { id: 'MAINTENANCE', label: 'Officina' },
-                      { id: 'CREW', label: 'Equipaggio Volo' },
-                      { id: 'CREW_SALARY', label: 'Stipendi Fissi' },
-                      { id: 'PENALTY', label: 'Penali' },
-                      { id: 'LEASE', label: 'Noleggi' },
+                      { id: 'MAINTENANCE', label: lang === 'it' ? 'Officina' : 'Maintenance' },
+                      { id: 'CREW', label: lang === 'it' ? 'Equipaggio Volo' : 'Flight Crew' },
+                      { id: 'CREW_SALARY', label: lang === 'it' ? 'Stipendi Fissi' : 'Crew Salaries' },
+                      { id: 'PENALTY', label: lang === 'it' ? 'Penali' : 'Penalties' },
+                      { id: 'LEASE', label: lang === 'it' ? 'Noleggi' : 'Leases' },
                       { id: 'FIXED_HANGAR', label: 'Hangar' },
-                      { id: 'FIXED_INSURANCE', label: 'Assicurazioni' },
-                      { id: 'FINANCING', label: 'Rate/Mutui' },
+                      { id: 'FIXED_INSURANCE', label: lang === 'it' ? 'Assicurazioni' : 'Insurance' },
+                      { id: 'FINANCING', label: lang === 'it' ? 'Rate/Mutui' : 'Loans/Leasing' },
                     ].map((btn) => (
                       <button
                         key={btn.id}
@@ -5144,10 +5154,10 @@ export default function App() {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <BookOpen size={22} className="text-cyan-400" /> Registro Voli & Diario Tour IVAO
+                  <BookOpen size={22} className="text-cyan-400" /> {lang === 'it' ? 'Registro Voli & Diario Tour IVAO' : 'Flight Logbook & IVAO Tours'}
                 </h2>
                 <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  Cronologia completa dei voli e mappa interattiva delle tappe raggruppate per Tour.
+                  {lang === 'it' ? 'Cronologia completa dei voli e mappa interattiva delle tappe raggruppate per Tour.' : 'Full flight history and interactive route legs map grouped by Tour.'}
                 </p>
               </div>
               <div className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 p-1 rounded-lg text-xs font-mono">
@@ -5159,7 +5169,7 @@ export default function App() {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  📜 Logbook Voli ({flightHistory.length})
+                  {lang === 'it' ? `📜 Logbook Voli (${flightHistory.length})` : `📜 Flights Logbook (${flightHistory.length})`}
                 </button>
                 <button
                   onClick={() => setLogbookSubTab('tours')}
@@ -5169,7 +5179,7 @@ export default function App() {
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  🗺️ Tour & Mappa Rotte ({toursList.length})
+                  {lang === 'it' ? `🗺️ Tour & Mappa Rotte (${toursList.length})` : `🗺️ Tours & Route Map (${toursList.length})`}
                 </button>
               </div>
             </div>
@@ -5180,15 +5190,15 @@ export default function App() {
                   <table className="w-full text-left font-mono text-xs">
                     <thead className="bg-slate-900/80 text-slate-400 border-b border-slate-800">
                       <tr>
-                        <th className="p-3">Data</th>
-                        <th className="p-3">Volo</th>
-                        <th className="p-3">Regole</th>
-                        <th className="p-3">Rotta</th>
-                        <th className="p-3">Durata</th>
-                        <th className="p-3">Fuel (kg)</th>
-                        <th className="p-3">Touchdown</th>
+                        <th className="p-3">{lang === 'it' ? 'Data' : 'Date'}</th>
+                        <th className="p-3">{lang === 'it' ? 'Volo' : 'Flight'}</th>
+                        <th className="p-3">{lang === 'it' ? 'Regole' : 'Rules'}</th>
+                        <th className="p-3">{lang === 'it' ? 'Rotta' : 'Route'}</th>
+                        <th className="p-3">{lang === 'it' ? 'Durata' : 'Duration'}</th>
+                        <th className="p-3">{lang === 'it' ? 'Fuel (kg)' : 'Fuel (kg)'}</th>
+                        <th className="p-3">{lang === 'it' ? 'Touchdown' : 'Touchdown'}</th>
                         <th className="p-3">G-Force</th>
-                        <th className="p-3 text-right">Ricavo Netto</th>
+                        <th className="p-3 text-right">{lang === 'it' ? 'Ricavo Netto' : 'Net Margin'}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-200">
@@ -5224,7 +5234,7 @@ export default function App() {
                       {flightHistory.length === 0 && (
                         <tr>
                           <td colSpan={9} className="p-8 text-center text-slate-500">
-                            Nessun volo registrato finora. Completa il tuo primo volo con SkyOps XP!
+                            {lang === 'it' ? 'Nessun volo registrato finora. Completa il tuo primo volo con SkyOps XP!' : 'No flights logged yet. Complete your first flight with SkyOps XP!'}
                           </td>
                         </tr>
                       )}
@@ -5359,40 +5369,40 @@ export default function App() {
                               onClick={() => handleToggleTourStatus(tourObj)}
                               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 transition"
                             >
-                              {tourObj.status === 'ACTIVE' ? '✓ Segna Completato' : '↺ Riapri Tour'}
+                              {tourObj.status === 'ACTIVE' ? (lang === 'it' ? '✓ Segna Completato' : '✓ Mark Completed') : (lang === 'it' ? '↺ Riapri Tour' : '↺ Reopen Tour')}
                             </button>
                             <button
                               onClick={() => handleDeleteTour(tourObj.id)}
                               className="px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-500/30 transition"
                             >
-                              Elimina Tour
+                              {lang === 'it' ? 'Elimina Tour' : 'Delete Tour'}
                             </button>
                           </div>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-6 gap-3 font-mono text-xs">
                           <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                            <div className="text-slate-400">Tappe Volate</div>
+                            <div className="text-slate-400">{lang === 'it' ? 'Tappe Volate' : 'Legs Flown'}</div>
                             <div className="text-lg font-bold text-white">{stats.legs_count || 0}</div>
                           </div>
                           <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                            <div className="text-slate-400">Distanza Totale</div>
+                            <div className="text-slate-400">{lang === 'it' ? 'Distanza Totale' : 'Total Distance'}</div>
                             <div className="text-lg font-bold text-cyan-300">{stats.total_nm || 0} NM</div>
                           </div>
                           <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                            <div className="text-slate-400">Ore di Volo</div>
+                            <div className="text-slate-400">{lang === 'it' ? 'Ore di Volo' : 'Flight Hours'}</div>
                             <div className="text-lg font-bold text-white">{stats.total_hours || 0} h</div>
                           </div>
                           <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                            <div className="text-slate-400">Fuel Bruciato</div>
+                            <div className="text-slate-400">{lang === 'it' ? 'Fuel Bruciato' : 'Fuel Burned'}</div>
                             <div className="text-lg font-bold text-purple-300">{stats.total_fuel_kg || 0} kg</div>
                           </div>
                           <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                            <div className="text-slate-400">Media Touchdown</div>
+                            <div className="text-slate-400">{lang === 'it' ? 'Media Touchdown' : 'Avg Touchdown'}</div>
                             <div className="text-lg font-bold text-amber-300">{stats.avg_touchdown_fpm ? `-${stats.avg_touchdown_fpm} fpm` : 'N/D'}</div>
                           </div>
                           <div className="bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-                            <div className="text-slate-400">Bilancio Tour</div>
+                            <div className="text-slate-400">{lang === 'it' ? 'Bilancio Tour' : 'Tour Net P&L'}</div>
                             <div className={`text-lg font-bold ${(stats.total_net_profit_eur || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                               {formatEuro(stats.total_net_profit_eur || 0)}
                             </div>
@@ -5403,7 +5413,7 @@ export default function App() {
                       {/* Interactive SVG Route Map */}
                       <div className="glass-panel p-4 rounded-xl border border-slate-800 space-y-2">
                         <div className="flex justify-between items-center font-mono text-xs text-slate-400">
-                          <span className="font-bold text-cyan-300">🛰️ Mappa Tracciato Tappe</span>
+                          <span className="font-bold text-cyan-300">{lang === 'it' ? '🛰️ Mappa Tracciato Tappe' : '🛰️ Route Legs Map'}</span>
                           <span>{legs.length > 0 ? `${legs[0].origin_icao} ➔ ... ➔ ${legs[legs.length - 1].destination_icao}` : 'Nessuna tappa ancora completata'}</span>
                         </div>
                         <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
@@ -5464,13 +5474,13 @@ export default function App() {
                           <table className="w-full text-left font-mono text-xs">
                             <thead className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
                               <tr>
-                                <th className="p-3">Tappa</th>
-                                <th className="p-3">Volo</th>
-                                <th className="p-3">Tratta</th>
-                                <th className="p-3">Distanza</th>
-                                <th className="p-3">Durata</th>
+                                <th className="p-3">{lang === 'it' ? 'Tappa' : 'Leg'}</th>
+                                <th className="p-3">{lang === 'it' ? 'Volo' : 'Flight'}</th>
+                                <th className="p-3">{lang === 'it' ? 'Tratta' : 'Route'}</th>
+                                <th className="p-3">{lang === 'it' ? 'Distanza' : 'Distance'}</th>
+                                <th className="p-3">{lang === 'it' ? 'Durata' : 'Duration'}</th>
                                 <th className="p-3">Touchdown</th>
-                                <th className="p-3 text-right">Netto (€)</th>
+                                <th className="p-3 text-right">{lang === 'it' ? 'Netto' : 'Net'}</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/60 text-slate-200">
